@@ -1,9 +1,7 @@
-# bot.py
-
 import os
 import sys
 import logging
-import asyncio  # Para manejar el entrenamiento de manera asíncrona si es necesario
+import asyncio  # Asegúrate de importar asyncio
 
 # Configurar el logging
 logging.basicConfig(level=logging.INFO)
@@ -18,8 +16,8 @@ from dotenv import load_dotenv
 
 # Importar las funciones necesarias
 from src.db.database import guardar_interaccion, crear_tablas, connect_db
+from src.ai.train import train_model  # Importar la función de entrenamiento
 from src.ai.predict import predict_response
-from src.ai.train import train_model  # Importar el modelo de entrenamiento
 
 # Cargar las variables de entorno
 load_dotenv()
@@ -66,6 +64,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         logger.info("El mensaje no contiene un texto válido o no tiene un usuario asociado.")
 
+async def entrenar_modelo():
+    try:
+        train_model()
+    except Exception as e:
+        logger.error(f"Error durante el entrenamiento del modelo: {e}")
 
 def iniciar_base_de_datos():
     # Conectar a la base de datos y crear las tablas si no existen
@@ -77,20 +80,14 @@ def iniciar_base_de_datos():
     else:
         logger.error("No se pudo conectar a la base de datos para crear las tablas.")
 
-
-async def entrenar_modelo():
-    logger.info("Iniciando el entrenamiento del modelo...")
-    train_model()  # Llamar a la función que entrena el modelo
-    logger.info("Modelo entrenado y guardado correctamente.")
-
-
 def start_bot():
     # Iniciar la base de datos y crear tablas
     logger.info("Iniciando el bot de Telegram...")
     iniciar_base_de_datos()
 
-    # Entrenar el modelo al iniciar (de forma asíncrona)
-    asyncio.create_task(entrenar_modelo())
+    # Iniciar el modelo de entrenamiento
+    logger.info("Iniciando el entrenamiento del modelo...")
+    asyncio.run(entrenar_modelo())  # Esto asegura que el entrenamiento del modelo se ejecute en un bucle de eventos.
 
     # Iniciar la aplicación de Telegram
     logger.info("Iniciando aplicación de Telegram...")
