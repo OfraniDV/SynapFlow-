@@ -1,18 +1,25 @@
+# bot.py
+
 import os
 import sys
+import logging
 
-# Añadir el directorio src del proyecto al sys.path
-sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+# Configurar el logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Añadir el directorio src al sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.join(current_dir, 'src')
+sys.path.append(src_dir)
 
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
-from db.database import guardar_interaccion, crear_tablas, connect_db  # Importar las funciones necesarias
 
-# Añadir el directorio raíz del proyecto al sys.path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from ai.predict import predict_response  # Importar desde la carpeta ai
+# Importar las funciones necesarias
+from src.db.database import guardar_interaccion, crear_tablas, connect_db
+from src.ai.predict import predict_response
 
 # Cargar las variables de entorno
 load_dotenv()
@@ -29,9 +36,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message.from_user.id == OWNER_ID:
             await update.message.reply_text("¡Hola! El bot está funcionando correctamente.")
         else:
-            print("Acceso denegado para el usuario:", update.message.from_user.id)
+            logger.info(f"Acceso denegado para el usuario: {update.message.from_user.id}")
     else:
-        print("El mensaje no contiene un usuario válido.")
+        logger.info("El mensaje no contiene un usuario válido.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Procesar todos los mensajes para aprender de ellos
@@ -41,23 +48,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         chat_type = update.message.chat.type
 
         # Aprender del mensaje, sin importar de quién es o dónde está
-        print(f"Aprendiendo del mensaje de {user_id}: {user_message}")
+        logger.info(f"Aprendiendo del mensaje de {user_id}: {user_message}")
 
         # Guardar la interacción en la base de datos
         guardar_interaccion(user_id, user_message, chat_type)
 
-        # Generar una predicción con la IA (esto es opcional si no se necesita respuesta inmediata)
-        predict_response(user_message)
-
         # Responder solo al owner y solo en chat privado
         if user_id == OWNER_ID and chat_type == 'private':
-            print(f"Respondiendo al owner {user_id}: {user_message}")
+            logger.info(f"Respondiendo al owner {user_id}: {user_message}")
             response = predict_response(user_message)
-            await update.message.reply_text(f"Respuesta IA: {response}")
+            await update.message.reply_text(f"{response}")
         else:
-            print(f"Mensaje procesado pero no respondido. Usuario: {user_id}")
+            logger.info(f"Mensaje procesado pero no respondido. Usuario: {user_id}")
     else:
-        print("El mensaje no contiene un texto válido o no tiene un usuario asociado.")
+        logger.info("El mensaje no contiene un texto válido o no tiene un usuario asociado.")
 
 def iniciar_base_de_datos():
     # Conectar a la base de datos y crear las tablas si no existen
@@ -66,21 +70,21 @@ def iniciar_base_de_datos():
         crear_tablas(conn)
         conn.close()
     else:
-        print("❌ No se pudo conectar a la base de datos para crear las tablas.")
+        logger.error("No se pudo conectar a la base de datos para crear las tablas.")
 
 def start_bot():
     # Iniciar la base de datos y crear tablas
-    print("Iniciando el bot de Telegram...")
+    logger.info("Iniciando el bot de Telegram...")
     iniciar_base_de_datos()
 
     # Iniciar la aplicación de Telegram
-    print("Iniciando aplicación de Telegram...")
+    logger.info("Iniciando aplicación de Telegram...")
     application = ApplicationBuilder().token(TOKEN).build()
-    
+
     # Comandos básicos
     start_handler = CommandHandler('start', start)
     application.add_handler(start_handler)
-    
+
     # Manejador de mensajes
     message_handler = MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)
     application.add_handler(message_handler)

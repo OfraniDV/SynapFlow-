@@ -1,59 +1,69 @@
-from ai.neural_network import NeuralNetwork
-from ai.model import save_model
+# src/ai/train.py
+
+import os
+import sys
+
+# Añadir el directorio src al sys.path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+src_dir = os.path.join(current_dir, '..')
+sys.path.append(src_dir)
+
+from db.database import connect_db
+from neural_network import NeuralNetwork
 import numpy as np
-from db.database import obtener_interacciones  # Importar la función que recupera los datos de la base de datos
+import pickle
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 
-# Función de preprocesamiento (debes adaptarla a tu caso de uso)
-def preprocess_interaction(message):
-    # Un ejemplo básico de preprocesamiento: convertir texto en una representación numérica
-    return np.array([ord(char) for char in message])  # Convierte los caracteres a sus códigos numéricos
+def obtener_interacciones():
+    conn = connect_db()
+    if conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT message FROM interacciones")
+        mensajes = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return [mensaje[0] for mensaje in mensajes]
+    else:
+        print("❌ No se pudo conectar a la base de datos para obtener las interacciones.")
+        return []
 
-def train_ai():
-    # Obtener las interacciones almacenadas en la base de datos
-    interacciones = obtener_interacciones()
-    
-    if not interacciones:
-        print("No hay suficientes datos de interacciones para entrenar el modelo.")
+def preparar_datos(textos):
+    tokenizer = Tokenizer()
+    tokenizer.fit_on_texts(textos)
+    sequences = tokenizer.texts_to_sequences(textos)
+    maxlen = max(len(seq) for seq in sequences)
+    sequences_padded = pad_sequences(sequences, maxlen=maxlen, padding='post')
+
+    # Guardar el tokenizer para uso posterior
+    with open('models/tokenizer.pkl', 'wb') as f:
+        pickle.dump(tokenizer, f)
+
+    return sequences_padded, tokenizer, maxlen
+
+def train_model():
+    textos = obtener_interacciones()
+    if not textos:
+        print("❌ No hay datos para entrenar el modelo.")
         return
-    
-    # Preprocesar los datos
-    X_train = []
-    y_train = []
-    
-    for interaccion in interacciones:
-        # Verificar si interaccion es una tupla o un diccionario
-        if isinstance(interaccion, dict):
-            message = interaccion['message']
-            chat_type = interaccion['chat_type']
-        else:
-            # Asumimos que es una tupla en el orden (mensaje, tipo_chat)
-            message = interaccion[0]
-            chat_type = interaccion[1]
-        
-        # Preprocesar el mensaje (transformar el texto en datos numéricos)
-        input_data = preprocess_interaction(message)
-        X_train.append(input_data)
-        
-        # Usar el tipo de chat como una posible etiqueta (privado = 1, grupo = 0)
-        if chat_type == 'private':
-            y_train.append([1])
-        else:
-            y_train.append([0])
-    
-    # Convertir los datos a numpy arrays para entrenar el modelo
-    X_train = np.array(X_train)
-    y_train = np.array(y_train)
-    
-    # Inicializar la red neuronal
-    input_shape = (X_train.shape[1],)  # El tamaño de la entrada depende de cómo preproceses los mensajes
-    output_shape = 2  # Binario (1 = privado, 0 = grupo), o ajusta esto según tu caso
-    nn = NeuralNetwork(input_shape, output_shape)
-    
-    # Entrenar la red neuronal
-    nn.train(X_train, y_train, epochs=10)
-    
-    # Guardar el modelo entrenado
-    save_model(nn.model)
+
+    sequences_padded, tokenizer, maxlen = preparar_datos(textos)
+    vocab_size = len(tokenizer.word_index) + 1
+
+    # Crear los datos de entrada y salida (usaremos un modelo simple para ejemplo)
+    X_train = sequences_padded
+    y_train = sequences_padded  # En modelos avanzados, esto sería desplazado
+
+    # Convertir y_train a categórico
+    y_train = tf.keras.utils.to_categorical(y_train, num_classes=vocab_size)
+
+    # Crear y entrenar el modelo
+    nn = NeuralNetwork(input_shape=(maxlen,), output_shape=vocab_size)
+    nn.train(X_train, y_train, epochs=10, batch_size=32)
+
+    # Guardar el modelo
+    nn.save('models/modelo.h5')
+    print("✅ Modelo entrenado y guardado correctamente.")
 
 if __name__ == '__main__':
-    train_ai()
+    train_model()
