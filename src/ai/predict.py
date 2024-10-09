@@ -12,7 +12,8 @@ import tensorflow as tf  # type: ignore
 import numpy as np
 import pickle
 from tensorflow.keras.preprocessing.sequence import pad_sequences  # type: ignore
-from neural_network import NeuralNetwork
+from src.ai.neural_network import NeuralNetwork
+
 
 # Cargar el modelo y el tokenizer una sola vez
 model_path = 'models/modelo.h5'
