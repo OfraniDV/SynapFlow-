@@ -57,7 +57,7 @@ def train_model():
     y_train = sequences_padded  # En modelos avanzados, esto sería desplazado
 
     # Convertir y_train a categórico
-    y_train = tf.keras.utils.to_categorical(y_train, num_classes=vocab_size)
+    y_train = tf.keras.utils.to_categorical(y_train, num_classes=vocab_size).reshape(X_train.shape[0], maxlen, vocab_size)
 
     # Crear y entrenar el modelo
     nn = NeuralNetwork(input_shape=(maxlen,), output_shape=vocab_size)
