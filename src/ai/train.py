@@ -9,7 +9,8 @@ src_dir = os.path.join(current_dir, '..')
 sys.path.append(src_dir)
 
 from db.database import connect_db
-from neural_network import NeuralNetwork
+from src.ai.neural_network import NeuralNetwork
+
 import numpy as np
 import pickle
 from tensorflow.keras.preprocessing.text import Tokenizer
