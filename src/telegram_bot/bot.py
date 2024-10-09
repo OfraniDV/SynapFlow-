@@ -22,12 +22,25 @@ from src.ai.predict import predict_response
 # Cargar las variables de entorno
 load_dotenv()
 
-# Asigna un string vacío si el token no está configurado, para evitar problemas de tipo
+# Asignar un string vacío si el token no está configurado, para evitar problemas de tipo
 TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 if not TOKEN:
     raise ValueError("El token de Telegram no está configurado en el archivo .env")
 
 OWNER_ID = int(os.getenv('OWNER_ID', '0'))  # Asigna 0 si OWNER_ID no está presente
+
+# Crear una variable global para la conexión a la base de datos
+db_conn = None
+
+def iniciar_base_de_datos():
+    global db_conn
+    # Conectar a la base de datos y crear las tablas si no existen
+    db_conn = connect_db()
+    if db_conn:
+        crear_tablas(db_conn)
+        logger.info("Las tablas fueron creadas o ya existían.")
+    else:
+        logger.error("No se pudo conectar a la base de datos para crear las tablas.")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message and update.message.from_user:
@@ -39,6 +52,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.info("El mensaje no contiene un usuario válido.")
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    global db_conn  # Asegurarse de usar la conexión global a la base de datos
     # Procesar todos los mensajes para aprender de ellos
     if update.message and update.message.from_user and update.message.text:
         user_message = update.message.text
@@ -63,17 +77,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logger.info(f"Mensaje procesado pero no respondido. Usuario: {user_id}")
     else:
         logger.info("El mensaje no contiene un texto válido o no tiene un usuario asociado.")
-
-
-def iniciar_base_de_datos():
-    # Conectar a la base de datos y crear las tablas si no existen
-    conn = connect_db()
-    if conn:
-        crear_tablas(conn)
-        conn.close()
-        logger.info("Las tablas fueron creadas o ya existían.")
-    else:
-        logger.error("No se pudo conectar a la base de datos para crear las tablas.")
 
 def start_bot():
     # Iniciar la base de datos y crear tablas
