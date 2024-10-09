@@ -2,6 +2,7 @@
 
 import os
 import sys
+import tensorflow as tf  # Asegúrate de importar TensorFlow aquí
 
 # Añadir el directorio src al sys.path
 current_dir = os.path.dirname(os.path.abspath(__file__))
