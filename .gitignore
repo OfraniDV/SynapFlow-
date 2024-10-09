@@ -1,3 +1,10 @@
+# Evitar subir claves de API y archivos sensibles
+config.py
+*.env
+*.log
+/models/
+/data/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
