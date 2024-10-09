@@ -1,7 +1,6 @@
 import os
 import sys
 import logging
-import asyncio  # Asegúrate de importar asyncio
 
 # Configurar el logging
 logging.basicConfig(level=logging.INFO)
@@ -16,7 +15,6 @@ from dotenv import load_dotenv
 
 # Importar las funciones necesarias
 from src.db.database import guardar_interaccion, crear_tablas, connect_db
-from src.ai.train import train_model  # Importar la función de entrenamiento
 from src.ai.predict import predict_response
 
 # Cargar las variables de entorno
@@ -64,12 +62,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     else:
         logger.info("El mensaje no contiene un texto válido o no tiene un usuario asociado.")
 
-async def entrenar_modelo():
-    try:
-        train_model()
-    except Exception as e:
-        logger.error(f"Error durante el entrenamiento del modelo: {e}")
-
 def iniciar_base_de_datos():
     # Conectar a la base de datos y crear las tablas si no existen
     conn = connect_db()
@@ -80,14 +72,10 @@ def iniciar_base_de_datos():
     else:
         logger.error("No se pudo conectar a la base de datos para crear las tablas.")
 
-async def start_bot():
+def start_bot():
     # Iniciar la base de datos y crear tablas
     logger.info("Iniciando el bot de Telegram...")
     iniciar_base_de_datos()
-
-    # Iniciar el modelo de entrenamiento
-    logger.info("Iniciando el entrenamiento del modelo...")
-    await entrenar_modelo()  # Usar await para asegurarse de que el entrenamiento ocurra antes de que el bot inicie
 
     # Iniciar la aplicación de Telegram
     logger.info("Iniciando aplicación de Telegram...")
@@ -105,4 +93,4 @@ async def start_bot():
     application.run_polling()
 
 if __name__ == '__main__':
-    asyncio.run(start_bot())  # Usar asyncio.run para asegurarse de que todo esté en el contexto asíncrono
+    start_bot()
