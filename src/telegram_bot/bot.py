@@ -67,6 +67,7 @@ def iniciar_base_de_datos():
     if conn:
         crear_tablas(conn)
         conn.close()
+        logger.info("Las tablas fueron creadas o ya existían.")
     else:
         logger.error("No se pudo conectar a la base de datos para crear las tablas.")
 
