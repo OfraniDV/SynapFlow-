@@ -17,6 +17,10 @@ from dotenv import load_dotenv
 
 # Importar las funciones necesarias desde el módulo de base de datos
 from src.db.database import guardar_interaccion, crear_tablas, connect_db
+# Importar la función predict_response desde el archivo predict
+from src.ai.predict import predict_response
+# Importar la función de limpieza de datos desde el preprocesador
+from src.ai.data_preprocessor import limpiar_texto
 
 # Cargar las variables de entorno
 load_dotenv()
@@ -58,18 +62,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         user_id = update.message.from_user.id
         chat_type = update.message.chat.type
 
+        # Limpiar el texto del mensaje recibido
+        user_message_limpio = limpiar_texto(user_message)
+
         # Aprender del mensaje, sin importar de quién es o dónde está
-        logger.info(f"Aprendiendo del mensaje de {user_id}: {user_message}")
+        logger.info(f"Aprendiendo del mensaje de {user_id}: {user_message_limpio}")
 
         # Guardar la interacción en la base de datos usando la conexión global (db_conn)
         if db_conn:  # Verifica que la conexión global a la base de datos esté activa
-            guardar_interaccion(db_conn, user_id, user_message, chat_type)
+            guardar_interaccion(db_conn, user_id, user_message_limpio, chat_type)
         else:
             logger.error("No se pudo guardar la interacción, la conexión a la base de datos no está disponible.")
 
         # Responder solo al owner y solo en chat privado
         if user_id == OWNER_ID and chat_type == 'private':
-            response = predict_response(user_message)
+            logger.info(f"Respondiendo al owner {user_id}: {user_message_limpio}")
+            response = predict_response(user_message_limpio)
             await update.message.reply_text(f"{response}")
         else:
             logger.info(f"Mensaje procesado pero no respondido. Usuario: {user_id}")
