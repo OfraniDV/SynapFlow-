@@ -15,9 +15,8 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 from dotenv import load_dotenv
 
-# Importar las funciones necesarias
+# Importar las funciones necesarias desde el módulo de base de datos
 from src.db.database import guardar_interaccion, crear_tablas, connect_db
-from src.ai.predict import predict_response
 
 # Cargar las variables de entorno
 load_dotenv()
@@ -37,8 +36,9 @@ def iniciar_base_de_datos():
     # Conectar a la base de datos y crear las tablas si no existen
     db_conn = connect_db()
     if db_conn:
+        logger.info("Conexión a la base de datos establecida.")
         crear_tablas(db_conn)
-        logger.info("Las tablas fueron creadas o ya existían.")
+        logger.info("Tablas creadas o ya existentes.")
     else:
         logger.error("No se pudo conectar a la base de datos para crear las tablas.")
 
@@ -53,7 +53,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     global db_conn  # Asegurarse de usar la conexión global a la base de datos
-    # Procesar todos los mensajes para aprender de ellos
     if update.message and update.message.from_user and update.message.text:
         user_message = update.message.text
         user_id = update.message.from_user.id
@@ -70,7 +69,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         # Responder solo al owner y solo en chat privado
         if user_id == OWNER_ID and chat_type == 'private':
-            logger.info(f"Respondiendo al owner {user_id}: {user_message}")
             response = predict_response(user_message)
             await update.message.reply_text(f"{response}")
         else:
