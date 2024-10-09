@@ -48,8 +48,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Aprender del mensaje, sin importar de quién es o dónde está
         logger.info(f"Aprendiendo del mensaje de {user_id}: {user_message}")
 
-        # Guardar la interacción en la base de datos
-        guardar_interaccion(user_id, user_message, chat_type)
+        # Guardar la interacción en la base de datos usando la conexión global (db_conn)
+        if db_conn:  # Verifica que la conexión global a la base de datos esté activa
+            guardar_interaccion(db_conn, user_id, user_message, chat_type)
+        else:
+            logger.error("No se pudo guardar la interacción, la conexión a la base de datos no está disponible.")
 
         # Responder solo al owner y solo en chat privado
         if user_id == OWNER_ID and chat_type == 'private':
@@ -60,6 +63,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             logger.info(f"Mensaje procesado pero no respondido. Usuario: {user_id}")
     else:
         logger.info("El mensaje no contiene un texto válido o no tiene un usuario asociado.")
+
 
 def iniciar_base_de_datos():
     # Conectar a la base de datos y crear las tablas si no existen
