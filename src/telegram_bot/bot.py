@@ -80,14 +80,14 @@ def iniciar_base_de_datos():
     else:
         logger.error("No se pudo conectar a la base de datos para crear las tablas.")
 
-def start_bot():
+async def start_bot():
     # Iniciar la base de datos y crear tablas
     logger.info("Iniciando el bot de Telegram...")
     iniciar_base_de_datos()
 
     # Iniciar el modelo de entrenamiento
     logger.info("Iniciando el entrenamiento del modelo...")
-    asyncio.run(entrenar_modelo())  # Esto asegura que el entrenamiento del modelo se ejecute en un bucle de eventos.
+    await entrenar_modelo()  # Usar await para asegurarse de que el entrenamiento ocurra antes de que el bot inicie
 
     # Iniciar la aplicación de Telegram
     logger.info("Iniciando aplicación de Telegram...")
@@ -105,4 +105,4 @@ def start_bot():
     application.run_polling()
 
 if __name__ == '__main__':
-    start_bot()
+    asyncio.run(start_bot())  # Usar asyncio.run para asegurarse de que todo esté en el contexto asíncrono
