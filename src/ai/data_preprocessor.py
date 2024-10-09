@@ -1,8 +1,12 @@
+# src/ai/data_preprocessor.py
+
 import re
 
-def preprocess_interaction(text):
-    # Eliminar caracteres especiales, convertir a minúsculas, etc.
-    text = re.sub(r'\W+', ' ', text.lower())
-    # Aquí podrías agregar más técnicas de preprocesamiento como tokenización
-    vectorized = [ord(char) for char in text[:100]]  # Un ejemplo simple
-    return vectorized
+def limpiar_texto(texto):
+    texto = texto.lower()
+    texto = re.sub(r'[^a-zA-Z0-9áéíóúÁÉÍÓÚñÑüÜ\s]', '', texto)
+    return texto
+
+def preparar_datos(textos):
+    textos_limpios = [limpiar_texto(texto) for texto in textos]
+    return textos_limpios

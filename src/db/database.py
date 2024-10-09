@@ -1,3 +1,5 @@
+# src/db/database.py
+
 import os
 import psycopg2
 from dotenv import load_dotenv
@@ -49,7 +51,7 @@ def crear_tablas(conn):
         );
         """
     ]
-    
+
     if conn:
         cursor = conn.cursor()
         for query in queries:
@@ -68,7 +70,6 @@ def crear_tablas(conn):
 def guardar_interaccion(user_id, message, chat_type):
     conn = connect_db()
     if conn:
-        crear_tablas(conn)  # Asegurar que las tablas estén creadas antes de guardar la interacción
         cursor = conn.cursor()
         query = "INSERT INTO interacciones (user_id, message, chat_type) VALUES (%s, %s, %s)"
         try:

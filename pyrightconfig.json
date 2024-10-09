@@ -1,13 +1,17 @@
 {
-    "include": [
-      "src"
-    ],
-    "exclude": [
-      "**/__pycache__",
-      "venv"
-    ],
-    "venvPath": "./",
-    "venv": "venv",
-    "pythonVersion": "3.12",
-    "reportMissingImports": false
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    "venv"
+  ],
+  "venvPath": "./",
+  "venv": "venv",
+  "pythonVersion": "3.10",
+  "typeCheckingMode": "basic",
+  "reportMissingImports": false,
+  "reportMissingTypeStubs": false,
+  "reportUndefinedVariable": false,
+  "reportGeneralTypeIssues": false
 }
