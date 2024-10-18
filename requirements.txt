@@ -1,5 +1,0 @@
-python-telegram-bot
-numpy
-pandas
-psycopg2-binary  # en lugar de psycopg2
-tensorflow  # o pytorch, según el que estés usando
