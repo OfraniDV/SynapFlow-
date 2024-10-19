@@ -48,3 +48,47 @@ To run this project on your local machine, follow these steps:
 - **Advanced AI Models**: State-of-the-art neural network algorithms.
 - **Automation**: Fully automated scheduling and task handling.
 - **Real-Time Data Tracking**: Monitors and processes data efficiently.
+
+Aquí tienes la sección de configuración del entorno en formato cuadro, lista para copiarla con todo el formateo:
+
+
+## ⚙️ **Configuración del Entorno**
+
+Para que el proyecto funcione correctamente, debes configurar un archivo `.env` con las variables necesarias. Hemos proporcionado un archivo de ejemplo llamado `.env.example` que puedes usar como referencia.
+
+### Pasos para Configurar el Entorno:
+
+1. **Copia el archivo de ejemplo**:
+   Renombra el archivo `.env.example` a `.env`:
+   
+   cp .env.example .env
+   
+
+2. **Rellena las variables**:
+   Abre el archivo `.env` y reemplaza los valores de ejemplo con la información correcta:
+
+   - **BOT_TOKEN**: Proporcionado por BotFather en Telegram.
+   - **OWNER_ID**: Tu ID de usuario en Telegram.
+   - **OPENAI_API_KEY** y **OPENAI_ORGANIZATION_ID**: Tu clave y ID de OpenAI.
+   - **DB_HOST**, **DB_PORT**, **DB_NAME**, **DB_USER**, **DB_PASSWORD**: Los detalles de tu base de datos PostgreSQL.
+   - **VIP_GROUP_ID**: El ID del grupo VIP en Telegram para notificaciones.
+
+   Aquí tienes un ejemplo del archivo `.env` con las variables que necesitarás completar:
+  
+   BOT_TOKEN=<tu_token_del_bot_aqui>
+   OWNER_ID=<tu_id_de_propietario_aqui>
+
+   OPENAI_API_KEY=<tu_clave_api_de_openai_aqui>
+   OPENAI_ORGANIZATION_ID=<tu_id_organizacion_de_openai_aqui>
+
+   DB_HOST=<direccion_host_de_tu_base_de_datos_aqui>
+   DB_PORT=<puerto_de_tu_base_de_datos_aqui>
+   DB_NAME=<nombre_de_tu_base_de_datos_aqui>
+   DB_USER=<usuario_de_la_base_de_datos_aqui>
+   DB_PASSWORD=<contraseña_de_la_base_de_datos_aqui>
+
+   VIP_GROUP_ID=<id_del_grupo_vip_aqui>
+   
+
+3. **Guarda y ejecuta el proyecto**:
+   Una vez configurado el archivo `.env`, estarás listo para ejecutar el bot correctamente.
