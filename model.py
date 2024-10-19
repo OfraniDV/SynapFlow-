@@ -1,5 +1,5 @@
 # model.py
-
+import os
 import pickle
 import pandas as pd
 import numpy as np
@@ -37,27 +37,41 @@ class NumerologyModel:
         except Exception as e:
             logging.warning(f"No se pudo cargar el modelo entrenado: {e}")
 
-    # Método para cargar el modelo de numerología y el MultiLabelBinarizer
+    #Método para cargar el modelo de numerología, el MultiLabelBinarizer, y max_sequence_length
     def load_model(self, model_path):
         try:
-            # Cargar el modelo entrenado
+            # Verificar si el archivo del modelo existe
+            import os
+            if not os.path.exists(model_path):
+                logging.error(f"El archivo {model_path} no existe en la ruta actual.")
+                self.is_trained = False
+                return
+
+            # Intentar cargar el modelo entrenado de Keras
+            logging.info(f"Intentando cargar el modelo desde: {model_path}")
             self.model = load_model(model_path)
             logging.info(f"Modelo de numerología cargado exitosamente desde {model_path}.")
 
-            # Cargar el MultiLabelBinarizer
+            # Intentar cargar el MultiLabelBinarizer
+            logging.info("Intentando cargar MultiLabelBinarizer desde mlb.pkl...")
             with open('mlb.pkl', 'rb') as f:
                 self.mlb = pickle.load(f)
             logging.info("MultiLabelBinarizer cargado exitosamente.")
 
-            # Cargar max_sequence_length
+            # Intentar cargar max_sequence_length
+            logging.info("Intentando cargar max_sequence_length desde max_sequence_length.pkl...")
             with open('max_sequence_length.pkl', 'rb') as f:
                 self.max_sequence_length = pickle.load(f)
             logging.info("max_sequence_length cargado exitosamente.")
 
+            # Si todo se cargó correctamente, marcamos el modelo como entrenado
             self.is_trained = True
+            logging.info("El modelo está entrenado y listo para hacer predicciones.")
+
         except Exception as e:
-            logging.error(f"Error al cargar el modelo: {e}")
+            logging.error(f"Error al cargar el modelo, MultiLabelBinarizer o max_sequence_length: {e}")
             self.is_trained = False
+
 
     def prepare_data(self):
         # Obtener todas las fórmulas desde la tabla logsfirewallids
