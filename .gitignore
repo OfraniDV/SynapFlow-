@@ -36,3 +36,7 @@ build/
 .idea/
 *.sublime-project
 *.sublime-workspace
+
+# Archivos de modelo y datos generados que no deberían subirse
+*.pkl
+*.keras
