@@ -1,5 +1,38 @@
-# Ignorar archivos .env
+# Ignorar archivos compilados de Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Ignorar entornos virtuales de Python
+env/
+venv/
+ENV/
+VENV/
+*.env
 .env
 
-# Ignorar la carpeta node_modules
-node_modules/
+# Ignorar archivos de configuración del entorno
+*.DS_Store
+*.log
+*.sqlite3
+
+# Archivos relacionados con Jupyter Notebook
+.ipynb_checkpoints/
+
+# Ignorar archivos de depuración y paquetes
+*.egg
+*.egg-info/
+dist/
+build/
+*.spec
+
+# Archivos de lock y dependencias que no deberían subirse
+*.lock
+.Python
+
+# Ignorar configuraciones de IDE
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
