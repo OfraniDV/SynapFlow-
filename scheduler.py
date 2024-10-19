@@ -14,8 +14,8 @@ def start_scheduler(numerology_model):
         except Exception as e:
             logging.error(f"Error durante el reentrenamiento del modelo: {e}")
 
-    # Programar el reentrenamiento cada 5 minutos
-    schedule.every(5).minutes.do(retrain_model)
+    # Programar el reentrenamiento cada 1h
+    schedule.every(60).minutes.do(retrain_model)
 
     # Función que ejecuta el scheduler en un hilo separado
     def run_scheduler():
