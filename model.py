@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Importamos OpenAI
-from openai.error import OpenAIError, APIConnectionError, AuthenticationError
+from openai import OpenAIError, APIConnectionError, AuthenticationError
 
 # Instanciamos el cliente de OpenAI
 import openai
