@@ -1,50 +1,52 @@
+#model.py
 import os
 import pickle
+import time
 import pandas as pd
 import numpy as np
 import logging
+
+import spacy
 import re
+
+# Cargar el modelo de lenguaje de spaCy (asegúrate de tener instalado el modelo adecuado)
+nlp = spacy.load("es_core_news_md")  # Modelo en español, ajusta según el idioma
+
 import tensorflow as tf
 from datetime import datetime
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dropout, LSTM, Dense, Embedding, Bidirectional
 from sklearn.preprocessing import MultiLabelBinarizer
-
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.preprocessing.text import Tokenizer
-import openai
 from dotenv import load_dotenv
 
 # Cargar variables de entorno
 load_dotenv()
 
-# Configuración de la API de OpenAI
-api_key = os.getenv("OPENAI_API_KEY")
-organization_id = os.getenv("OPENAI_ORGANIZATION_ID")
-
-if not api_key or not organization_id:
-    raise ValueError("Las claves de API de OpenAI no se cargaron correctamente. Verifica tu archivo .env.")
-
-openai.api_key = api_key
-openai.organization = organization_id
-
-# Construcción de un modelo secuencial (opcional según lo necesites)
-model = Sequential()
-model.add(Embedding(input_dim=10000, output_dim=128, input_length=100))
-model.add(Bidirectional(LSTM(128, return_sequences=True)))
-model.add(Dropout(0.3))
-model.add(Bidirectional(LSTM(128)))
-model.add(Dropout(0.3))
-model.add(Dense(128, activation='relu'))
-model.add(Dense(10, activation='softmax'))  # Ajusta la salida según tus clases
-
-
 # Configuración del logger
-logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Importamos OpenAI
+from openai.error import OpenAIError, APIConnectionError, AuthenticationError
+
+# Instanciamos el cliente de OpenAI
+import openai
+client = openai
+
+# Obtener la clave API y organización desde el archivo .env
+openai.organization = os.getenv("OPENAI_ORGANIZATION_ID")
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# Verificar si las variables están correctamente cargadas
+if not openai.api_key:
+    raise ValueError("Falta la clave API de OpenAI.")
+if not openai.organization:
+    raise ValueError("Falta la ID de organización de OpenAI.")
+
 
 class NumerologyModel:
     def __init__(self, db):
@@ -797,61 +799,56 @@ class Conversar:
 
 
     def generate_response(self, input_text, temperature=1.0, max_words=20):
-        """Genera una respuesta avanzada basada en el input_text, utilizando tanto el modelo local como GPT-4 para mejorar."""
+        """Genera una respuesta usando primero GPT-4o y luego, en caso de fallo, el modelo local."""
         
         logger.info(f"Generando respuesta para el mensaje: {input_text}")
 
-        # Realizar el análisis previo del mensaje
-        pre_analysis_response = self.analyze_message(input_text)
-        if pre_analysis_response:
-            logger.info(f"Respuesta preanalizada generada: {pre_analysis_response}")
-            return pre_analysis_response  # Retornamos si el análisis genera una respuesta específica
-
+        # Primero intentamos obtener la respuesta de GPT-4o
+        gpt_response = self.gpt4o_generate_response(input_text)
+        
+        # Si GPT-4o genera una respuesta válida, la usamos
+        if gpt_response:
+            logger.info(f"Respuesta de GPT-4o recibida: {gpt_response}")
+            # Almacenar para ajuste fino
+            self.almacenar_para_ajuste_fino(input_text, gpt_response)
+            return gpt_response
+        
+        # Si no se obtuvo respuesta de GPT-4o, generamos con el modelo local
+        logger.warning("No se obtuvo respuesta de GPT-4o. Generando con el modelo local.")
+        
         # Verificar si el modelo local está entrenado antes de proceder
         if not self.is_trained or self.model is None:
-            logger.error("El modelo no está entrenado o no ha sido cargado. No se puede generar una respuesta coherente.")
+            logger.error("El modelo local no está entrenado o no ha sido cargado. No se puede generar una respuesta coherente.")
             return "El modelo local aún no está listo, por favor intenta más tarde."
 
         # Verificar que el tokenizer esté inicializado
         if self.tokenizer is None:
             logger.error("El tokenizer no ha sido inicializado. No se puede procesar el mensaje.")
-            return "El modelo no está listo para generar una respuesta."
+            return "El modelo local no está listo para generar una respuesta."
 
         # Generar la respuesta con el modelo local
         logger.info("Generando respuesta local.")
         local_response = self.model_generate_response(input_text, temperature, max_words)
 
-        # Generar la respuesta con GPT-4 para comparar
-        logger.info("Generando respuesta con GPT-4.")
-        gpt_response = self.gpt4_generate_response(input_text)
+        # Retornamos la respuesta local como respaldo
+        return local_response
 
-        # Comparar la respuesta local con la de GPT-4
-        if self.comparar_respuestas(local_response, gpt_response):
-            logger.info("La respuesta de GPT-4 es mejor. Actualizando el modelo local.")
-            # Aquí podrías almacenar los datos para ajuste fino
-            self.almacenar_para_ajuste_fino(input_text, gpt_response)
-
-            # Opcional: Si prefieres, retorna la respuesta mejorada
-            return gpt_response
-        else:
-            # Si la respuesta local es suficiente, usa esa
-            return local_response
-
-    def gpt4_generate_response(self, input_text):
-        """Genera una respuesta usando GPT-4."""
+    def gpt4o_generate_response(self, input_text):
         try:
             response = openai.ChatCompletion.create(
-                model="gpt-4",
+                model="gpt-4o-mini",  # Especifica el modelo gpt-4o-mini
                 messages=[
-                    {"role": "system", "content": "Eres un asistente útil y preciso."},
+                    {"role": "system", "content": "You are a helpful assistant."},
                     {"role": "user", "content": input_text}
                 ],
-                max_tokens=150
+                max_tokens=150,
+                timeout=20  # Ajusta este valor si es necesario
             )
             return response['choices'][0]['message']['content']
         except Exception as e:
-            logger.error(f"Error al generar respuesta con GPT-4: {e}")
+            logger.error(f"Error al generar respuesta con GPT-4o: {e}")
             return None
+
 
     def comparar_respuestas(self, local_response, gpt_response):
         """Compara la respuesta generada localmente con la de GPT-4."""
@@ -863,26 +860,38 @@ class Conversar:
         return False
 
     def almacenar_para_ajuste_fino(self, input_text, gpt_response):
-        """Almacena las entradas y la respuesta de GPT-4 para realizar un ajuste fino del modelo."""
-        # Guarda el input y la respuesta de GPT-4 para realizar ajustes finos posteriormente
-        data = {"input": input_text, "response": gpt_response}
-        with open('ajuste_fino_datos.pkl', 'ab') as f:
-            pickle.dump(data, f)
+        """Almacena las entradas y la respuesta de GPT-4o para realizar un ajuste fino del modelo."""
+        try:
+            data = {"input": input_text, "response": gpt_response}
+            with open('ajuste_fino_datos.pkl', 'ab') as f:
+                pickle.dump(data, f)
+            logger.info("Datos almacenados para ajuste fino.")
+        except Exception as e:
+            logger.error(f"Error al almacenar datos para ajuste fino: {e}")
+
+
 
     def realizar_ajuste_fino(self):
         """Realiza un ajuste fino en el modelo local utilizando los datos almacenados."""
         logger.info("Realizando ajuste fino con las respuestas generadas por GPT-4.")
         
-        # Cargar los datos almacenados
-        with open('ajuste_fino_datos.pkl', 'rb') as f:
-            datos_para_ajuste = []
-            while True:
-                try:
-                    datos_para_ajuste.append(pickle.load(f))
-                except EOFError:
-                    break
+        datos_para_ajuste = []
+        # Cargar todos los archivos de ajuste fino si hay varios
+        for file in os.listdir('.'):
+            if file.startswith('ajuste_fino_datos') and file.endswith('.pkl'):
+                with open(file, 'rb') as f:
+                    while True:
+                        try:
+                            datos_para_ajuste.append(pickle.load(f))
+                        except EOFError:
+                            break
 
-        # Extraer los inputs y las respuestas de GPT-4 para ajustar el modelo
+        # Solo proceder si tenemos suficientes datos para el ajuste fino
+        if len(datos_para_ajuste) < 10:
+            logger.info("No hay suficientes datos para realizar un ajuste fino.")
+            return
+        
+        # Extraer los inputs y las respuestas de GPT-4
         inputs = [data["input"] for data in datos_para_ajuste]
         respuestas = [data["response"] for data in datos_para_ajuste]
 
@@ -895,17 +904,71 @@ class Conversar:
         y = pad_sequences(response_sequences, maxlen=self.max_sequence_length)
 
         # Realizar el ajuste fino del modelo local
+        logger.info(f"Entrenando el modelo local con {len(X)} ejemplos nuevos.")
         self.model.fit(X, y, epochs=2, batch_size=32)
 
         logger.info("Ajuste fino completado con éxito.")
 
 
+
+    def model_generate_response(self, input_text, temperature=1.0, max_words=20):
+        """Genera una respuesta utilizando el modelo local."""
+        
+        logger.info(f"Generando respuesta local para el mensaje: {input_text}")
+
+        # Preprocesar el texto de entrada para convertirlo a secuencias de índices
+        input_sequence = self.tokenizer.texts_to_sequences([input_text])
+        if not input_sequence or len(input_sequence[0]) == 0:
+            logger.warning("No se pudo procesar el mensaje de entrada, probablemente no se entiende el mensaje.")
+            return "Lo siento, no entiendo lo que quieres decir."
+
+        # Aplicar padding para asegurar que la longitud de la secuencia sea consistente con lo que el modelo espera
+        input_sequence = pad_sequences(input_sequence, maxlen=self.max_sequence_length)
+        logger.debug(f"Secuencia de entrada después del padding: {input_sequence}")
+
+        generated_response = []  # Lista para almacenar las palabras generadas
+
+        # Comenzar a generar una secuencia de palabras para la respuesta
+        for _ in range(max_words):
+            # Realizar la predicción del siguiente token/palabra
+            predicted_probs = self.model.predict(input_sequence)
+            logger.debug(f"Probabilidades predichas para la próxima palabra: {predicted_probs}")
+
+            # Aplicar control de temperatura para ajustar la aleatoriedad en la generación de palabras
+            predicted_probs = np.asarray(predicted_probs).astype('float64')
+            predicted_probs = np.log(predicted_probs + 1e-8) / temperature
+            exp_preds = np.exp(predicted_probs)
+            predicted_probs = exp_preds / np.sum(exp_preds)  # Normalizar las probabilidades
+            logger.debug(f"Probabilidades ajustadas después de aplicar temperatura: {predicted_probs}")
+
+            # Seleccionar el índice de la palabra predicha
+            predicted_word_index = np.random.choice(range(self.num_words), p=predicted_probs.ravel())
+            predicted_word = self.tokenizer.index_word.get(predicted_word_index, '<UNK>')  # Recuperar la palabra correspondiente al índice
+
+            # Detener la generación si se encuentra una palabra desconocida o inválida
+            if predicted_word == '<UNK>' or predicted_word == '':
+                logger.warning("Se predijo una palabra desconocida o inválida, deteniendo la generación de respuesta.")
+                break
+
+            # Agregar la palabra predicha a la respuesta generada
+            generated_response.append(predicted_word)
+            logger.debug(f"Palabra generada: {predicted_word}")
+
+            # Actualizar la secuencia de entrada con la palabra recién generada
+            input_sequence = pad_sequences([input_sequence[0].tolist() + [predicted_word_index]], maxlen=self.max_sequence_length)
+
+        # Combinar las palabras generadas en una oración final
+        response = ' '.join(generated_response)
+        logger.info(f"Respuesta local generada: {response}")
+
+        return response
+    
     def post_process_response(self, response):
         """
         Aplica filtros y ajustes finales a la respuesta generada para mejorar la coherencia.
-        Por ejemplo, eliminar repeticiones, corregir errores gramaticales simples y mejorar la estructura.
+        Elimina repeticiones, corrige errores gramaticales simples y mejora la estructura.
         """
-        # Eliminar posibles repeticiones de palabras
+        # Eliminar posibles repeticiones de palabras y frases
         words = response.split()
         filtered_words = []
         for i, word in enumerate(words):
@@ -916,10 +979,25 @@ class Conversar:
         # Reconstruir la respuesta filtrada
         response = ' '.join(filtered_words)
 
-        # Corregir posibles errores de puntuación o gramática básica (esto puede ser ampliado con NLP)
-        # Ejemplo básico: corregir doble punto o espacio innecesario
+        # Corregir la gramática y estructura con spaCy
+        doc = nlp(response)
+        response = ' '.join([token.text for token in doc])
+
+        # Eliminar frases redundantes (opcional, si deseas analizar las frases también)
+        sentences = list(doc.sents)
+        filtered_sentences = []
+        for i, sent in enumerate(sentences):
+            if i > 0 and str(sentences[i-1]) == str(sent):
+                continue  # Omitir si la oración es una repetición exacta de la anterior
+            filtered_sentences.append(str(sent))
+        
+        response = ' '.join(filtered_sentences)
+
+        # Corregir posibles errores de puntuación o gramática básica
         response = re.sub(r'\s+', ' ', response)  # Unificar espacios múltiples en uno solo
         response = re.sub(r'\.\.+', '.', response)  # Reemplazar múltiples puntos por un solo punto
+        response = re.sub(r'\s,', ',', response)  # Corregir espacios antes de las comas
+        response = re.sub(r'\s\.', '.', response)  # Corregir espacios antes de los puntos
 
         return response
 
