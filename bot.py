@@ -164,7 +164,7 @@ async def conversar(update: Update, context: ContextTypes.DEFAULT_TYPE, conversa
     
     await update.message.reply_text(f"🤖 Respuesta: {response}")
 
-# En tu función main(), ajustada para que siempre entrene el modelo
+# En tu función main(), ajustada para realizar fine-tuning al inicio
 def main():
     logger.info("Iniciando el bot...")
 
@@ -191,6 +191,18 @@ def main():
         logger.error(f"No se pudo cargar el modelo conversacional: {e}")
         return
 
+    # Realizar fine-tuning con los nuevos mensajes al iniciar
+    try:
+        logger.info("Realizando ajuste fino del modelo conversacional al iniciar...")
+        nuevos_datos = db.get_new_messages()  # Obtener los nuevos mensajes de la base de datos
+        if nuevos_datos:
+            conversar_model.ajuste_fino(nuevos_datos)
+            logger.info("Ajuste fino completado exitosamente al iniciar.")
+        else:
+            logger.info("No hay nuevos mensajes para ajuste fino.")
+    except Exception as e:
+        logger.error(f"Error durante el ajuste fino del modelo conversacional al inicio: {e}")
+    
     # Entrenar el modelo de numerología al iniciar
     logger.info("Entrenando el modelo de numerología...")
     numerology_model.train()
@@ -223,7 +235,6 @@ def main():
     logger.info("Iniciando el bot...")
     application.run_polling()
     logger.info("Bot en funcionamiento.")
-
 
 if __name__ == '__main__':
     main()
