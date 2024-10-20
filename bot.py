@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # Cargar variables de entorno
 load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
+VIP_GROUP_ID = os.getenv('VIP_GROUP_ID') 
 
 # Establecer el event loop en Windows
 if sys.platform.startswith("win"):

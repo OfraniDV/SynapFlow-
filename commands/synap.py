@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 async def synap(update: Update, context: ContextTypes.DEFAULT_TYPE, db, model, conversar_model):
     logger.info(f"Comando /synap recibido de {update.message.from_user.username}")
     
-    # Obtener el ID del grupo VIP desde las variables de entorno
+    # Obtener el ID del grupo VIP desde bot_data
     VIP_GROUP_ID = context.bot_data.get('VIP_GROUP_ID', None)
 
     # Verificar si el comando está siendo ejecutado en el grupo VIP
@@ -22,6 +22,11 @@ async def synap(update: Update, context: ContextTypes.DEFAULT_TYPE, db, model, c
             "Para recibir predicciones, debes estar en el **grupo VIP**.", 
             parse_mode='HTML'
         )
+        return
+
+    if VIP_GROUP_ID is None:
+        await update.message.reply_text("⚠️ Error: El ID del grupo VIP no está configurado.", parse_mode='HTML')
+        logger.error("VIP_GROUP_ID no está configurado. Asegúrate de que la variable de entorno está correctamente configurada.")
         return
 
     if str(update.message.chat_id) != VIP_GROUP_ID:
