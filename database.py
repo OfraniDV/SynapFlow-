@@ -51,8 +51,77 @@ class Database:
                     mensaje TEXT
                 );
             """)
+
+            # Nueva tabla group_converse
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS group_converse (
+                    id SERIAL PRIMARY KEY,
+                    type TEXT,
+                    serial TEXT,
+                    group_id BIGINT UNIQUE NOT NULL,
+                    inserted_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
             
             self.conn.commit()
+
+    def add_group(self, group_id, group_type, serial):
+        """Añade un nuevo grupo a la tabla group_converse si no existe"""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO group_converse (group_id, type, serial)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (group_id) DO NOTHING
+            """, (group_id, group_type, serial))
+            self.conn.commit()
+
+    def is_group_registered(self, group_id):
+        """Verifica si un grupo ya está registrado en la base de datos"""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT COUNT(*) FROM group_converse WHERE group_id = %s
+            """, (group_id,))
+            result = cur.fetchone()
+            return result[0] > 0
+        
+    def delete_group(self, group_id):
+        """
+        Elimina un grupo de la tabla group_converse basado en el group_id.
+        
+        Args:
+            group_id (int): El ID del grupo que deseas eliminar.
+        """
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM group_converse WHERE group_id = %s
+            """, (group_id,))
+            self.conn.commit()
+            logging.info(f"Grupo con group_id {group_id} eliminado exitosamente.")
+
+    def get_groups(self):
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT group_id, type FROM group_converse")
+                return cur.fetchall()
+        except Exception as e:
+            logging.error(f"Error al obtener los grupos: {e}")
+            return []
+
+
+
+    def get_owner_info(self, owner_id):
+        """Obtiene la información más reciente del propietario desde logsfirewallids"""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT nombre, alias FROM logsfirewallids
+                WHERE user_id = %s
+                ORDER BY fechareciente DESC LIMIT 1
+            """, (owner_id,))
+            result = cur.fetchone()
+            if result:
+                return {"nombre": result[0], "alias": result[1]}
+            return None
+
 
     def get_all_formulas(self):
         with self.conn.cursor() as cur:
@@ -62,7 +131,7 @@ class Database:
             """)
             result = cur.fetchall()
             return [row[0] for row in result if row[0]]
-
+    
     def get_all_interactions(self):
         with self.conn.cursor() as cur:
             cur.execute("""
@@ -79,16 +148,6 @@ class Database:
                     except ValueError as e:
                         continue
             return interactions
-
-    def get_all_messages(self):
-        with self.conn.cursor() as cur:
-            cur.execute("""
-            SELECT mensaje FROM logsfirewallids
-            WHERE mensaje IS NOT NULL AND mensaje != ''
-            """)
-            result = cur.fetchall()
-            messages = [row[0].strip() for row in result if row[0] and isinstance(row[0], str)]
-            return messages
 
     def get_new_messages(self):
         """Obtiene los mensajes de los últimos 90 minutos que no se hayan procesado antes."""

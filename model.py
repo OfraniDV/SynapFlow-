@@ -755,6 +755,22 @@ class Conversar:
         # Verificación inicial si deseas cargar un modelo preentrenado
         # self.model = self.cargar_modelo()  # Descomentar si quieres cargar un modelo al inicio
 
+    def cargar_modelo(self):
+        """Carga el modelo conversacional y el tokenizer"""
+        try:
+            # Cargar el modelo de la red neuronal guardado en archivo
+            self.model = tf.keras.models.load_model('conversational_model.keras')
+
+            # Cargar el tokenizer desde un archivo
+            with open('tokenizer.pkl', 'rb') as f:
+                self.tokenizer = pickle.load(f)
+            
+            # Indicar que el modelo ha sido cargado y está listo para usarse
+            self.is_trained = True
+            logging.info("Modelo conversacional cargado exitosamente.")
+        except Exception as e:
+            logging.error(f"Error al cargar el modelo conversacional: {e}")
+            self.is_trained = False
 
     def analyze_message(self, input_text):
         """
