@@ -14,6 +14,19 @@ from tensorflow.keras.layers import Input
 from sklearn.preprocessing import MultiLabelBinarizer
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.layers import Embedding, LSTM
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+import time
+from tqdm import tqdm
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.callbacks import TensorBoard
+
+import logging
+
+# Configuración del logger
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+
 
 class NumerologyModel:
     def __init__(self, db):
@@ -21,57 +34,11 @@ class NumerologyModel:
         self.model = None
         self.mlb = None
         self.is_trained = False
-        self.mapping = {}  # Diccionario para el mapeo directo
-        self.vibrations_by_day = {}  # Inicializar vibraciones por día
-        self.most_delayed_numbers = {}  # Inicializar números más atrasados
-        
-        # Intentar cargar el modelo entrenado y el MultiLabelBinarizer
-        try:
-            self.model = load_model('numerology_model.keras')
-            with open('mlb.pkl', 'rb') as f:
-                self.mlb = pickle.load(f)
-            with open('max_sequence_length.pkl', 'rb') as f:
-                self.max_sequence_length = pickle.load(f)
-            self.is_trained = True
-            logging.info("Modelo, MultiLabelBinarizer y max_sequence_length cargados exitosamente.")
-        except Exception as e:
-            logging.warning(f"No se pudo cargar el modelo entrenado: {e}")
-
-    #Método para cargar el modelo de numerología, el MultiLabelBinarizer, y max_sequence_length
-    def load_model(self, model_path):
-        try:
-            # Verificar si el archivo del modelo existe
-            import os
-            if not os.path.exists(model_path):
-                logging.error(f"El archivo {model_path} no existe en la ruta actual.")
-                self.is_trained = False
-                return
-
-            # Intentar cargar el modelo entrenado de Keras
-            logging.info(f"Intentando cargar el modelo desde: {model_path}")
-            self.model = load_model(model_path)
-            logging.info(f"Modelo de numerología cargado exitosamente desde {model_path}.")
-
-            # Intentar cargar el MultiLabelBinarizer
-            logging.info("Intentando cargar MultiLabelBinarizer desde mlb.pkl...")
-            with open('mlb.pkl', 'rb') as f:
-                self.mlb = pickle.load(f)
-            logging.info("MultiLabelBinarizer cargado exitosamente.")
-
-            # Intentar cargar max_sequence_length
-            logging.info("Intentando cargar max_sequence_length desde max_sequence_length.pkl...")
-            with open('max_sequence_length.pkl', 'rb') as f:
-                self.max_sequence_length = pickle.load(f)
-            logging.info("max_sequence_length cargado exitosamente.")
-
-            # Si todo se cargó correctamente, marcamos el modelo como entrenado
-            self.is_trained = True
-            logging.info("El modelo está entrenado y listo para hacer predicciones.")
-
-        except Exception as e:
-            logging.error(f"Error al cargar el modelo, MultiLabelBinarizer o max_sequence_length: {e}")
-            self.is_trained = False
-
+        self.mapping = {}
+        self.vibrations_by_day = {}
+        self.most_delayed_numbers = {}
+        self.delayed_numbers = {}  # Asegurarse de que este atributo esté presente
+        self.max_sequence_length = None  # Inicializar la variable
 
     def prepare_data(self):
         # Obtener todas las fórmulas desde la tabla logsfirewallids
@@ -128,7 +95,6 @@ class NumerologyModel:
                 max_delay = max(self.delayed_numbers[category], key=lambda x: x['days'])
                 self.most_delayed_numbers[category] = max_delay
         #logging.info(f"Números más atrasados por categoría: {self.most_delayed_numbers}")
-
 
     def extract_rules_from_formulas(self, formulas):
         data = []
@@ -213,7 +179,7 @@ class NumerologyModel:
                     continue
 
                 # Patrón 4: Formato 🪸XX=(YYv)=ZZ🪸 (Raíces)
-                match = re.match(r'^.*?(\d{1,2})=\((\d{1,2}v?)\)=([\d{1,2}]+).*?$', line)
+                match = re.match(r'^.*?(\d{1,2})=\((\d{1,2}v?)\)=([\d]{1,2}).*?$', line)
                 if match:
                     input_number = int(match.group(1))
                     v_number = match.group(2)
@@ -234,6 +200,8 @@ class NumerologyModel:
                     input_number = int(match.group(1))
                     raw_numbers = re.findall(r'\d{1,2}v?', match.group(2))
                     recommended_numbers = process_numbers_with_v(raw_numbers)
+                    # Almacenar en root_numbers
+                    self.root_numbers.setdefault(input_number, []).extend(recommended_numbers)
                     data.append({'input_number': input_number, 'recommended_numbers': recommended_numbers})
                     self.mapping.setdefault(input_number, []).extend(recommended_numbers)
                     logging.debug(f"Patrón 5 encontrado: {line}")
@@ -246,8 +214,8 @@ class NumerologyModel:
                     input_number = int(match.group(1))
                     raw_numbers = re.findall(r'\d{1,2}v?', match.group(2))
                     recommended_numbers = process_numbers_with_v(raw_numbers)
-                    data.append({'input_number': input_number, 'recommended_numbers': recommended_numbers})
                     self.mapping.setdefault(input_number, []).extend(recommended_numbers)
+                    data.append({'input_number': input_number, 'recommended_numbers': recommended_numbers})
                     logging.debug(f"Patrón 6 encontrado: {line}")
                     matches_found = True
                     continue
@@ -258,8 +226,8 @@ class NumerologyModel:
                     input_number = int(match.group(1))
                     raw_numbers = [match.group(2)]
                     recommended_numbers = process_numbers_with_v(raw_numbers)
-                    data.append({'input_number': input_number, 'recommended_numbers': recommended_numbers})
                     self.mapping.setdefault(input_number, []).extend(recommended_numbers)
+                    data.append({'input_number': input_number, 'recommended_numbers': recommended_numbers})
                     logging.debug(f"Patrón 7 encontrado: {line}")
                     matches_found = True
                     continue
@@ -330,15 +298,16 @@ class NumerologyModel:
                     # Puedes decidir cómo manejar estos números o simplemente ignorarlos
                     continue
 
-                # Patrón 13: Formato de números atrasados (Centenas, Decenas, Terminales)
-                match = re.match(r'^.*?(\d{1,2})[-–](\d+)\s*d[ií]as.*?$', line)
+                # Patrón 13: Formato de números atrasados (Centenas, Decenas, Terminales, Parejas)
+                match = re.match(r'^.*?([0-9]{1,2})[-–](\d+)\s*[dD][ií]as?.*$', line)
                 if match and current_category:
-                    number = int(match.group(1))
-                    days = int(match.group(2))
-                    category = current_category  # Necesitamos identificar la categoría actual
-                    # Almacenar en delayed_numbers
+                    number = int(match.group(1))  # Número atrasado
+                    days = int(match.group(2))  # Días de atraso
+                    category = current_category  # Categoría actual (Centena, Decena, Terminal, etc.)
+
+                    # Almacenar en delayed_numbers dentro de su categoría
                     self.delayed_numbers.setdefault(category, []).append({'number': number, 'days': days})
-                    logging.debug(f"Patrón 13 (Números atrasados) encontrado en categoría {category}: {line}")
+                    logging.debug(f"Patrón 13 (Números atrasados) encontrado: {number} en {category} con {days} días")
                     matches_found = True
                     continue
 
@@ -430,7 +399,6 @@ class NumerologyModel:
         logging.debug(f"Resultados de lotería: {self.lottery_results}")
         return data
 
-
     # Función auxiliar para convertir abreviaturas de días a nombres completos en español
     def day_abbr_to_full_name(self, abbr):
         mapping = {
@@ -450,6 +418,7 @@ class NumerologyModel:
             logging.info("Iniciando la preparación de los datos...")
             self.prepare_data()
 
+            # Verificar que los datos de entrada y las etiquetas existen
             if not hasattr(self, 'X') or not hasattr(self, 'y'):
                 logging.error("Los datos de entrenamiento no están disponibles. Asegúrate de que los datos fueron cargados correctamente.")
                 self.is_trained = False
@@ -460,7 +429,7 @@ class NumerologyModel:
                 self.is_trained = False
                 return
 
-            # Incorporar las vibraciones y otros datos en las características
+            # Incorporar vibraciones y otros datos en las características
             logging.info("Incorporando vibraciones y otros datos en las características...")
             X_features = []
             for idx, input_number in enumerate(self.X.flatten()):
@@ -488,9 +457,21 @@ class NumerologyModel:
 
                 X_features.append(features)
 
+            # Verificar que X_features no esté vacío antes de calcular max_sequence_length
+            if not X_features or len(X_features) == 0:
+                logging.error("X_features está vacío o no tiene datos válidos.")
+                self.is_trained = False
+                return
+
             # Guardar la longitud máxima de secuencia
             self.max_sequence_length = max(len(seq) for seq in X_features)
             logging.info(f"Longitud máxima de secuencia establecida en: {self.max_sequence_length}")
+
+            # Verificar que max_sequence_length sea válida
+            if not isinstance(self.max_sequence_length, int) or self.max_sequence_length <= 0:
+                logging.error(f"max_sequence_length no es válido: {self.max_sequence_length}")
+                self.is_trained = False
+                return
 
             # Convertir a matriz numpy con padding
             X_train = pad_sequences(X_features, padding='post', dtype='int32', maxlen=self.max_sequence_length)
@@ -537,24 +518,9 @@ class NumerologyModel:
             self.is_trained = True
             logging.info("Modelo entrenado exitosamente con red neuronal.")
 
-            # Guardar el modelo en formato nativo de Keras
-            self.model.save('numerology_model.keras')
-            logging.info("Modelo guardado exitosamente como 'numerology_model.keras'.")
-
-            # Guardar el MultiLabelBinarizer
-            with open('mlb.pkl', 'wb') as f:
-                pickle.dump(self.mlb, f)
-            logging.info("MultiLabelBinarizer guardado exitosamente en 'mlb.pkl'.")
-
-            # Guardar max_sequence_length
-            with open('max_sequence_length.pkl', 'wb') as f:
-                pickle.dump(self.max_sequence_length, f)
-            logging.info("max_sequence_length guardado exitosamente.")
-
         except Exception as e:
             logging.error(f"Error durante el entrenamiento del modelo: {e}")
             self.is_trained = False
-
 
     def predict(self, input_number):
         # Usar mapeo directo si existe
@@ -562,8 +528,10 @@ class NumerologyModel:
             recommended_numbers = self.mapping[input_number]
             logging.debug(f"Números recomendados (mapeo directo): {recommended_numbers}")
             return recommended_numbers
-        elif self.is_trained:
+        elif self.is_trained and self.model and self.mlb and self.max_sequence_length:
             try:
+                logging.info(f"Realizando predicción para el número: {input_number}")
+                
                 # Crear las mismas características que en el entrenamiento
                 features = [input_number]
                 logging.debug(f"Número de entrada: {input_number}")
@@ -594,7 +562,7 @@ class NumerologyModel:
 
                 # Realizar la predicción con la red neuronal
                 prediction = self.model.predict(input_features)
-                logging.debug(f"Predicción del modelo: {prediction}")
+                logging.debug(f"Predicción del modelo (sin procesar): {prediction}")
 
                 # Umbral para considerar una clase como positiva
                 threshold = 0.5
@@ -610,9 +578,8 @@ class NumerologyModel:
                 logging.error(f"Error durante la predicción: {e}")
                 return []
         else:
-            logging.warning(f"No se encontraron recomendaciones para el número {input_number} y el modelo no está entrenado.")
+            logging.warning(f"No se encontraron recomendaciones para el número {input_number} y el modelo no está entrenado correctamente.")
             return []
-
 
     def create_vip_message(self, input_number):
         recommended_numbers = self.predict(input_number)
@@ -735,7 +702,9 @@ class NumerologyModel:
         }
         return days_mapping.get(day_in_english, day_in_english)
 
+
 # Class Conversar
+
 class Conversar:
     def __init__(self, db):
         self.db = db
@@ -746,68 +715,136 @@ class Conversar:
         self.num_words = 10000  # Limitar el vocabulario a 10,000 palabras más frecuentes
         self.processed_messages = set()  # Conjunto para almacenar mensajes únicos procesados
 
-    def clean_text(self, text):
-        # Eliminar emojis y caracteres especiales
-        text = re.sub(r'[^\w\s]', '', text)  # Conserva solo caracteres alfanuméricos y espacios
-        return text.strip().lower()  # Convertir a minúsculas para evitar duplicados por diferencia de mayúsculas
+    def generate_response(self, input_text, temperature=1.0):
+        """Genera una respuesta basada en el input_text usando el modelo entrenado.
+        La temperatura controla la aleatoriedad de las predicciones."""
+
+        if not self.is_trained:
+            return "El modelo no está entrenado aún."
+
+        # Preprocesar el texto de entrada
+        input_sequence = self.tokenizer.texts_to_sequences([input_text])
+        if not input_sequence or len(input_sequence[0]) == 0:
+            return "No entiendo lo que quieres decir."
+
+        # Aplicar padding a la secuencia de entrada
+        input_sequence = pad_sequences(input_sequence, maxlen=self.max_sequence_length)
+
+        # Predecir la siguiente palabra en la secuencia
+        predicted_probs = self.model.predict(input_sequence)
+
+        # Aplicar control de temperatura para ajustar la aleatoriedad
+        predicted_probs = np.asarray(predicted_probs).astype('float64')
+        predicted_probs = np.log(predicted_probs + 1e-8) / temperature
+        exp_preds = np.exp(predicted_probs)
+        predicted_probs = exp_preds / np.sum(exp_preds)
+
+        # Seleccionar el índice de la palabra predicha
+        predicted_word_index = np.random.choice(range(self.num_words), p=predicted_probs.ravel())
+
+        # Convertir el índice predicho en palabra
+        predicted_word = self.tokenizer.index_word.get(predicted_word_index, '<UNK>')
+
+        # Retornar la palabra generada o una respuesta predeterminada si no es válida
+        return predicted_word if predicted_word != '<UNK>' else "Lo siento, no puedo generar una respuesta adecuada."
+
+    def build_model(self):
+        """Construir e inicializar el modelo secuencial"""
+        logging.info("Inicializando el modelo...")
+        try:
+            self.model = Sequential()
+            self.model.add(Embedding(input_dim=self.num_words, output_dim=128, input_length=self.max_sequence_length))
+            self.model.add(LSTM(128, return_sequences=False))
+            self.model.add(Dense(128, activation='relu'))
+            self.model.add(Dense(self.num_words, activation='softmax'))
+
+            # Compilar el modelo
+            self.model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+            logging.info("Modelo inicializado y compilado correctamente.")
+        except Exception as e:
+            logging.error(f"Error al construir el modelo: {e}")
+            raise e
 
     def prepare_data(self):
-        # Obtener todos los mensajes desde la base de datos
+        """Prepara los datos para el modelo de conversación"""
         logging.info("Preparando datos para el modelo de conversación...")
-        all_messages = self.db.get_all_messages()  # Obtener todos los mensajes de la base de datos
+
+        # Obtener todos los mensajes de la base de datos
+        all_messages = self.db.get_all_messages()
         if not all_messages:
             logging.error("No se encontraron mensajes en la base de datos.")
-            return
+            return None  # Asegúrate de que se retorna None si no hay mensajes
 
+        # Limpiar y procesar los mensajes
         messages = []
         for message_text in all_messages:
-            # Limpiar el texto del mensaje
             cleaned_message = self.clean_text(message_text)
-
-            # Si el mensaje ya ha sido procesado, ignorarlo
             if cleaned_message in self.processed_messages:
-                #logging.info(f"Ignorando mensaje duplicado: {cleaned_message}")
-                continue
-
-            # Añadir el mensaje al conjunto de mensajes procesados
+                continue  # Ignorar mensajes duplicados
             self.processed_messages.add(cleaned_message)
-
-            # Agregar el mensaje limpio a la lista de mensajes
             messages.append(cleaned_message)
 
         if not messages:
             logging.error("No se encontraron nuevos mensajes únicos para procesar.")
-            return
+            return None  # Asegúrate de que se retorna None si no hay mensajes limpios
 
         # Tokenizar los mensajes
-        from tensorflow.keras.preprocessing.text import Tokenizer
+        sequences = self.tokenize_messages(messages)
+        logging.info(f"Se generaron {len(sequences)} secuencias.")
+
+        # Generar las secuencias de entrada y etiquetas
+        self.X, self.y = self.generate_sequences_and_labels(sequences)
+
+        # Verificar que las secuencias se generaron correctamente
+        if self.X is None or len(self.X) == 0 or self.y is None or len(self.y) == 0:
+            logging.error("La preparación de los datos no produjo secuencias válidas.")
+            return None
+
+        logging.info(f"Datos preparados correctamente: X tiene forma {self.X.shape}, y tiene forma {self.y.shape}")
+
+
+    
+    def clean_text(self, text):
+        """Elimina emojis y caracteres especiales, convierte a minúsculas"""
+        # Regex para eliminar emojis
+        emoji_pattern = re.compile(
+            "[" u"\U0001F600-\U0001F64F"  # emoticones
+            u"\U0001F300-\U0001F5FF"  # símbolos y pictogramas
+            u"\U0001F680-\U0001F6FF"  # transportes y símbolos de mapas
+            u"\U0001F1E0-\U0001F1FF"  # banderas
+            "]+", flags=re.UNICODE)
+        
+        text = emoji_pattern.sub(r'', text)  # Eliminar emojis
+        text = re.sub(r'[^\w\s]', '', text)  # Eliminar caracteres especiales, excepto palabras y espacios
+        return text.strip().lower()  # Convertir a minúsculas
+
+    def tokenize_messages(self, messages):
+        """Tokeniza los mensajes y devuelve secuencias y el tokenizer"""
         self.tokenizer = Tokenizer(num_words=self.num_words, oov_token="<OOV>")
         self.tokenizer.fit_on_texts(messages)
-
-        # Convertir los mensajes en secuencias numéricas
         sequences = self.tokenizer.texts_to_sequences(messages)
-        from tensorflow.keras.preprocessing.sequence import pad_sequences
-        X = pad_sequences(sequences, maxlen=self.max_sequence_length)
+        return sequences
 
-        # Crear las etiquetas (siguiente palabra en la secuencia)
-        y = []
+    def generate_sequences_and_labels(self, sequences):
+        """Genera secuencias de entrada y etiquetas a partir de los mensajes tokenizados"""
+        X, y = [], []
         for seq in sequences:
             for i in range(1, len(seq)):
                 input_sequence = seq[:i]
                 target_word = seq[i]
 
                 # Padding para que todas las secuencias tengan la misma longitud
-                input_sequence = pad_sequences([input_sequence], maxlen=self.max_sequence_length)[0]
-                X = np.vstack([X, input_sequence])
+                input_sequence_padded = pad_sequences([input_sequence], maxlen=self.max_sequence_length)[0]
+
+                # Añadir la secuencia y la etiqueta
+                X.append(input_sequence_padded)
                 y.append(target_word)
+        
+        return np.array(X), np.array(y)
 
-        self.X = X
-        self.y = np.array(y)
-
-        logging.debug(f"Ejemplo de secuencias generadas: {self.X[:5]}")
-        logging.debug(f"Ejemplo de etiquetas generadas: {self.y[:5]}")
-
-    def train(self):
+    
+    def train(self, epochs=10, batch_size=32):
+        """Entrena el modelo conversacional"""
         try:
             # Preparar los datos
             logging.info("Iniciando la preparación de los datos...")
@@ -819,66 +856,78 @@ class Conversar:
                 self.is_trained = False
                 return
 
-            logging.info("Iniciando el entrenamiento del modelo conversacional...")
+            logging.info(f"Datos preparados: X tiene forma {self.X.shape}, y tiene forma {self.y.shape}")
 
-            # Verificar las dimensiones de X y y
-            logging.info(f"Forma de X (entrada): {self.X.shape}")
-            logging.info(f"Forma de y (objetivo): {self.y.shape}")
-
-            # Definir el modelo secuencial LSTM
-            self.model = Sequential()
-            self.model.add(Embedding(input_dim=10000, output_dim=128, input_length=self.max_sequence_length))
-            self.model.add(LSTM(64, return_sequences=False))
-            self.model.add(Dense(64, activation='relu'))
-            self.model.add(Dense(10000, activation='softmax'))  # 10,000 clases (palabras más frecuentes)
-
-            # Compilar el modelo
-            logging.info("Compilando el modelo...")
-            self.model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+            # Asegurarse de que el modelo está inicializado
+            if self.model is None:
+                logging.info("El modelo no está definido. Inicializando el modelo...")
+                self.build_model()
 
             # Entrenar el modelo
-            logging.info("Entrenando el modelo conversacional...")
-            self.model.fit(self.X, self.y, epochs=10, batch_size=32, verbose=1)
+            logging.info("Iniciando el entrenamiento del modelo...")
+            self.model.fit(self.X, self.y, epochs=epochs, batch_size=batch_size)
+            logging.info("Entrenamiento completado.")
 
             # Indicar que el modelo fue entrenado correctamente
             self.is_trained = True
-            logging.info("Entrenamiento del modelo conversacional completado con éxito.")
-
-            # Guardar el modelo entrenado en formato Keras
-            self.model.save('conversational_model.keras')
-            logging.info("Modelo conversacional guardado exitosamente como 'conversational_model.keras'.")
-
-            # Guardar el tokenizador u otros objetos necesarios
-            with open('tokenizer.pkl', 'wb') as f:
-                pickle.dump(self.tokenizer, f)  # Asume que tienes un tokenizador
-            logging.info("Tokenizador guardado exitosamente en 'tokenizer.pkl'.")
-
+            logging.info("Entrenamiento del modelo completado con éxito.")
+        
         except Exception as e:
-            logging.error(f"Error durante el entrenamiento del modelo conversacional: {e}")
+            logging.error(f"Error durante el entrenamiento del modelo: {e}")
             self.is_trained = False
+     
+    def ajustar_temperatura(self, input_text):
+        """Ajusta la temperatura en función de la longitud del input_text."""
+        if len(input_text.split()) <= 3:
+            return 0.7  # Respuestas más conservadoras para textos cortos
+        elif len(input_text.split()) > 10:
+            return 1.5  # Respuestas más creativas para textos más largos
+        else:
+            return 1.0  # Valor estándar de temperatura
+    
+    def filtrar_predicciones(self, predicted_probs):
+        """Aplica un filtro para penalizar palabras con muy baja o alta frecuencia."""
+        # Por ejemplo, puedes aplicar una penalización a palabras extremadamente comunes o raras
+        penalized_probs = np.copy(predicted_probs)
+        for index in range(self.num_words):
+            if index in self.frequent_words:
+                penalized_probs[index] *= 0.5  # Penalizar palabras muy frecuentes
+            elif index in self.rare_words:
+                penalized_probs[index] *= 1.5  # Aumentar palabras más raras para creatividad
+        return penalized_probs / np.sum(penalized_probs)  # Reescalar las probabilidades
+    
+    def generar_respuestas_multiples(self, input_text, n_respuestas=3):
+        """Genera múltiples respuestas y selecciona la mejor basada en la probabilidad."""
+        respuestas = []
+        for _ in range(n_respuestas):
+            respuesta = self.generate_response(input_text)
+            respuestas.append(respuesta)
+        
+        # Aquí podrías aplicar alguna métrica para elegir la mejor
+        return respuestas  # O seleccionar la más común o adecuada
+    
+    def ajuste_fino(self, nuevos_datos, epochs=2):
+        """Realiza ajuste fino del modelo con nuevos datos."""
+        logging.info("Iniciando el ajuste fino del modelo con nuevos datos...")
+        nuevas_secuencias = self.tokenizer.texts_to_sequences(nuevos_datos)
+        nuevas_X = pad_sequences(nuevas_secuencias, maxlen=self.max_sequence_length)
+        
+        # Supongamos que los nuevos datos tienen las etiquetas correctas
+        nuevas_y = self.generar_etiquetas(nuevas_secuencias)  # Esta función genera las etiquetas adecuadas
+        self.model.fit(nuevas_X, nuevas_y, epochs=epochs, batch_size=32)
+        
+        logging.info("Ajuste fino completado.")
 
-    def generate_response(self, input_text):
-        if not self.is_trained:
-            logging.error("El modelo conversacional no ha sido entrenado.")
-            return None
+    def mantener_contexto(self, input_text, contexto):
+        """Mantiene el contexto de la conversación para generar respuestas más coherentes."""
+        contexto.append(input_text)
+        if len(contexto) > 5:  # Mantener el contexto con una longitud máxima de 5 entradas
+            contexto.pop(0)
+        
+        texto_completo = " ".join(contexto)
+        return self.generate_response(texto_completo)
 
-        logging.info(f"Generando respuesta para: {input_text}")
 
-        # Preprocesar el texto de entrada
-        input_sequence = self.tokenizer.texts_to_sequences([input_text])
-        input_sequence = pad_sequences(input_sequence, maxlen=self.max_sequence_length)
 
-        logging.info(f"Secuencia de entrada tokenizada: {input_sequence}")
 
-        # Predecir la siguiente secuencia de texto
-        predicted_sequence = self.model.predict(input_sequence)
-        logging.info(f"Predicción generada por el modelo: {predicted_sequence}")
-
-        predicted_word_index = np.argmax(predicted_sequence, axis=-1)
-        logging.info(f"Índice de la palabra predicha: {predicted_word_index}")
-
-        # Convertir el índice predicho en palabra
-        predicted_word = self.tokenizer.index_word.get(predicted_word_index[0], '<UNK>')
-        logging.info(f"Palabra predicha: {predicted_word}")
-
-        return predicted_word if predicted_word != '<UNK>' else 'No puedo generar una respuesta adecuada.'
+        

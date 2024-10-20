@@ -6,8 +6,9 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 class MyHandler(FileSystemEventHandler):
-    def __init__(self, script_name):
+    def __init__(self, script_name, files_to_watch):
         self.script_name = script_name
+        self.files_to_watch = files_to_watch
         self.python_interpreter = sys.executable  # Obtiene la ruta del Python activo en el entorno virtual
         self.process = None
         self.restart_script()
@@ -27,22 +28,24 @@ class MyHandler(FileSystemEventHandler):
         except Exception as e:
             print(f"Error al reiniciar {self.script_name}: {e}")
 
-
     def on_modified(self, event):
-        if event.src_path.endswith(self.script_name):  # Verifica si se modificó bot.py
+        # Reinicia si alguno de los archivos importantes es modificado
+        if any(event.src_path.endswith(file) for file in self.files_to_watch):
             print(f'{event.src_path} modificado. Reiniciando {self.script_name}...')
             self.restart_script()
-
 
 if __name__ == "__main__":
     script_name = 'bot.py'  # Cambia esto si tu script tiene otro nombre
     path = '.'  # Directorio a observar (directorio actual)
 
-    event_handler = MyHandler(script_name)
+    # Archivos que deseas monitorear
+    files_to_watch = ['bot.py', '.env', 'model.py', 'database.py', 'scheduler.py']
+
+    event_handler = MyHandler(script_name, files_to_watch)
     observer = Observer()
     observer.schedule(event_handler, path, recursive=True)
 
-    print(f'Observando cambios en {path}...')
+    print(f'Observando cambios en {path} para los archivos: {", ".join(files_to_watch)}...')
     observer.start()
 
     try:
