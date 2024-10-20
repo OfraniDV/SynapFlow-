@@ -11,10 +11,7 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 # Importar otros módulos del proyecto
 from model import NumerologyModel, Conversar
 from database import Database
-from scheduler import start_scheduler
-
-
-
+from scheduler import start_scheduler  # Importar el scheduler
 
 # Configuración del logger
 logging.basicConfig(level=logging.INFO)
@@ -57,7 +54,6 @@ def load_commands(application, db, numerology_model, conversar_model):
             else:
                 logger.warning(f"El archivo {filename} no tiene una función {command_name}. No se pudo registrar el comando.")
 
-
 def register_message_handler(application, db, conversar_model):
     """Registra el MessageHandler para manejar mensajes de texto generales"""
     from commands.handle_message import handle_message
@@ -80,6 +76,17 @@ def main():
     conversar_model = Conversar(db)
     conversar_model.cargar_modelo()
 
+    # Realizar ajuste fino del modelo conversacional al iniciar
+    try:
+        nuevos_datos = db.get_new_messages()  # Obtener nuevos mensajes de la base de datos
+        if nuevos_datos:
+            conversar_model.ajuste_fino(nuevos_datos)
+            logger.info("Ajuste fino inicial del modelo conversacional completado exitosamente.")
+        else:
+            logger.info("No se encontraron nuevos datos para el ajuste fino inicial.")
+    except Exception as e:
+        logger.error(f"Error durante el ajuste fino inicial: {e}")
+
     # Crear la aplicación de Telegram
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -89,8 +96,12 @@ def main():
     # Registrar el MessageHandler para mensajes de texto generales
     register_message_handler(application, db, conversar_model)
 
+    # Iniciar el scheduler para el reentrenamiento periódico
+    start_scheduler(numerology_model, conversar_model)
+
     # Iniciar el bot
     application.run_polling()
+
 
 if __name__ == '__main__':
     main()
