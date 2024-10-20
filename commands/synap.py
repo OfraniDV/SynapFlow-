@@ -15,14 +15,23 @@ async def synap(update: Update, context: ContextTypes.DEFAULT_TYPE, db, model, c
     VIP_GROUP_ID = context.bot_data.get('VIP_GROUP_ID', None)
 
     # Verificar si el comando está siendo ejecutado en el grupo VIP
-    if update.message.chat.type != 'private' and str(update.message.chat_id) != VIP_GROUP_ID:
+    if update.message.chat.type == 'private':
+        logger.warning(f"El usuario {update.message.from_user.username} intentó usar el comando en un chat privado.")
+        await update.message.reply_text(
+            "⚠️ Este comando no está disponible en chats privados. "
+            "Para recibir predicciones, debes estar en el **grupo VIP**.", 
+            parse_mode='HTML'
+        )
+        return
+
+    if str(update.message.chat_id) != VIP_GROUP_ID:
         logger.warning(f"El grupo con ID {update.message.chat_id} no está autorizado para usar el comando /synap.")
         await update.message.reply_text(
             "⚠️ Este comando solo está disponible en el **grupo VIP**. Para poder recibir predicciones, "
             "asegúrate de estar en el grupo correcto.", parse_mode='HTML'
         )
         return
-    
+
     # Verificar si el modelo de numerología está entrenado
     if not model.is_trained:
         await update.message.reply_text('⚠️ El modelo de predicciones no está disponible en este momento.', parse_mode='HTML')
@@ -53,21 +62,25 @@ async def synap(update: Update, context: ContextTypes.DEFAULT_TYPE, db, model, c
         await update.message.reply_text('Ocurrió un error al generar las predicciones. Por favor, intenta más tarde.', parse_mode='HTML')
         return
 
-    # Obtener el nombre del usuario y generar un mensaje más personalizado
+    # Obtener el nombre del usuario
     user_first_name = update.message.from_user.first_name
 
-    # Obtener el nombre del grupo (solo si está en un grupo)
+    # Obtener el nombre del grupo o del chat
     group_name = update.message.chat.title if update.message.chat.type != 'private' else "VIP Group"
+
+    # Obtener el nombre del bot dinámicamente
+    bot_info = await context.bot.get_me()
+    bot_name = bot_info.first_name
 
     # Generar la fecha y hora actuales
     current_time = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
 
     # Generar el mensaje final de predicciones VIP
     response_message = (
-        f"🎉✨ <b>Predicciones del Grupo {group_name}</b> ✨🎉\n\n"
+        f"<b>{group_name}</b>\n\n"  # Encabezado con el nombre del grupo
         f"{vip_message}\n"
         f"📅 <i>Fecha y hora de consulta: {current_time}</i>\n"
-        f"🔮 <b>Desarrollado por @Odulami</b>"
+        f"🔮 <b>Desarrollado por @Odulami usando {bot_name}</b>"
     )
 
     # Enviar el mensaje VIP al usuario
