@@ -41,7 +41,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 # Cargar variables de entorno
 load_dotenv()
 
@@ -204,7 +203,7 @@ def main():
 
     # Iniciar el scheduler para reentrenamiento periódico
     logger.info("Iniciando el scheduler para reentrenamiento periódico...")
-    start_scheduler(numerology_model)
+    start_scheduler(numerology_model, conversar_model)
     logger.info("Scheduler iniciado.")
 
     # Crear la aplicación de Telegram
@@ -224,7 +223,6 @@ def main():
     logger.info("Iniciando el bot...")
     application.run_polling()
     logger.info("Bot en funcionamiento.")
-
 
 
 if __name__ == '__main__':

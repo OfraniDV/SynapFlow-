@@ -26,8 +26,6 @@ import logging
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-
-
 class NumerologyModel:
     def __init__(self, db):
         self.db = db
@@ -702,9 +700,7 @@ class NumerologyModel:
         }
         return days_mapping.get(day_in_english, day_in_english)
 
-
 # Class Conversar
-
 class Conversar:
     def __init__(self, db):
         self.db = db
@@ -715,9 +711,36 @@ class Conversar:
         self.num_words = 10000  # Limitar el vocabulario a 10,000 palabras más frecuentes
         self.processed_messages = set()  # Conjunto para almacenar mensajes únicos procesados
 
-    def generate_response(self, input_text, temperature=1.0):
-        """Genera una respuesta basada en el input_text usando el modelo entrenado.
-        La temperatura controla la aleatoriedad de las predicciones."""
+    def analyze_message(self, input_text):
+        """Realiza un análisis previo del mensaje antes de generar una respuesta."""
+        logger.info(f"Analizando el mensaje: {input_text}")
+
+        # Análisis 1: Detectar si el mensaje contiene ciertas palabras clave
+        keywords = ['ayuda', 'soporte', 'problema', 'error']
+        if any(keyword in input_text.lower() for keyword in keywords):
+            logger.info("El mensaje contiene palabras clave relacionadas con ayuda.")
+            return "Parece que necesitas ayuda. ¿En qué puedo asistirte?"
+
+        # Análisis 2: Detectar si el mensaje es muy corto
+        if len(input_text.split()) < 3:
+            logger.info("El mensaje es muy corto, generando una respuesta más conservadora.")
+            return "¿Podrías proporcionar más detalles?"
+
+        # Análisis 3: Detectar si el mensaje es muy largo
+        if len(input_text.split()) > 50:
+            logger.info("El mensaje es muy largo, solicitando resumir.")
+            return "Tu mensaje es un poco largo. ¿Podrías resumirlo para que pueda entender mejor?"
+
+        # Si no se detectan condiciones especiales, continuar con la generación de respuesta
+        return None
+
+    def generate_response(self, input_text, temperature=1.0, max_words=20):
+        """Genera una respuesta más avanzada basada en el input_text, generando una secuencia de palabras."""
+        
+        # Realizar el análisis previo del mensaje
+        pre_analysis_response = self.analyze_message(input_text)
+        if pre_analysis_response:
+            return pre_analysis_response  # Si el análisis sugiere una respuesta, la retornamos directamente
 
         if not self.is_trained:
             return "El modelo no está entrenado aún."
@@ -730,23 +753,38 @@ class Conversar:
         # Aplicar padding a la secuencia de entrada
         input_sequence = pad_sequences(input_sequence, maxlen=self.max_sequence_length)
 
-        # Predecir la siguiente palabra en la secuencia
-        predicted_probs = self.model.predict(input_sequence)
+        generated_response = []
+        
+        # Comenzar a generar una secuencia de palabras
+        for _ in range(max_words):
+            # Predecir la siguiente palabra en la secuencia
+            predicted_probs = self.model.predict(input_sequence)
+            
+            # Aplicar control de temperatura para ajustar la aleatoriedad
+            predicted_probs = np.asarray(predicted_probs).astype('float64')
+            predicted_probs = np.log(predicted_probs + 1e-8) / temperature
+            exp_preds = np.exp(predicted_probs)
+            predicted_probs = exp_preds / np.sum(exp_preds)
+            
+            # Seleccionar el índice de la palabra predicha
+            predicted_word_index = np.random.choice(range(self.num_words), p=predicted_probs.ravel())
+            
+            # Convertir el índice predicho en palabra
+            predicted_word = self.tokenizer.index_word.get(predicted_word_index, '<UNK>')
 
-        # Aplicar control de temperatura para ajustar la aleatoriedad
-        predicted_probs = np.asarray(predicted_probs).astype('float64')
-        predicted_probs = np.log(predicted_probs + 1e-8) / temperature
-        exp_preds = np.exp(predicted_probs)
-        predicted_probs = exp_preds / np.sum(exp_preds)
+            # Detener si se predice una palabra desconocida o si ya se ha generado una palabra inválida
+            if predicted_word == '<UNK>' or predicted_word == '':
+                break
+            
+            # Agregar la palabra predicha a la respuesta generada
+            generated_response.append(predicted_word)
+            
+            # Actualizar la secuencia de entrada para incluir la nueva palabra
+            input_sequence = pad_sequences([input_sequence[0].tolist() + [predicted_word_index]], maxlen=self.max_sequence_length)
+        
+        # Combinar las palabras generadas en una oración
+        return ' '.join(generated_response)
 
-        # Seleccionar el índice de la palabra predicha
-        predicted_word_index = np.random.choice(range(self.num_words), p=predicted_probs.ravel())
-
-        # Convertir el índice predicho en palabra
-        predicted_word = self.tokenizer.index_word.get(predicted_word_index, '<UNK>')
-
-        # Retornar la palabra generada o una respuesta predeterminada si no es válida
-        return predicted_word if predicted_word != '<UNK>' else "Lo siento, no puedo generar una respuesta adecuada."
 
     def build_model(self):
         """Construir e inicializar el modelo secuencial"""
@@ -909,12 +947,21 @@ class Conversar:
     def ajuste_fino(self, nuevos_datos, epochs=2):
         """Realiza ajuste fino del modelo con nuevos datos."""
         logging.info("Iniciando el ajuste fino del modelo con nuevos datos...")
-        nuevas_secuencias = self.tokenizer.texts_to_sequences(nuevos_datos)
-        nuevas_X = pad_sequences(nuevas_secuencias, maxlen=self.max_sequence_length)
+
+        # Procesar los nuevos datos
+        nuevos_datos_limpios = [self.clean_text(texto) for texto in nuevos_datos]
+        nuevas_secuencias = self.tokenizer.texts_to_sequences(nuevos_datos_limpios)
         
-        # Supongamos que los nuevos datos tienen las etiquetas correctas
-        nuevas_y = self.generar_etiquetas(nuevas_secuencias)  # Esta función genera las etiquetas adecuadas
+        # Generar secuencias y etiquetas para los nuevos datos
+        nuevas_X, nuevas_y = self.generate_sequences_and_labels(nuevas_secuencias)
+
+        if nuevas_X is None or len(nuevas_X) == 0:
+            logging.error("No se generaron nuevas secuencias para ajuste fino.")
+            return
+
+        # Realizar el ajuste fino con los nuevos datos
         self.model.fit(nuevas_X, nuevas_y, epochs=epochs, batch_size=32)
+        logging.info("Ajuste fino completado con éxito.")
         
         logging.info("Ajuste fino completado.")
 
@@ -926,8 +973,5 @@ class Conversar:
         
         texto_completo = " ".join(contexto)
         return self.generate_response(texto_completo)
-
-
-
-
-        
+    
+    

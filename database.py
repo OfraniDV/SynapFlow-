@@ -1,6 +1,9 @@
 # database.py
 import psycopg2
 import os
+import time
+from datetime import datetime, timedelta
+
 import logging
 from dotenv import load_dotenv
 
@@ -69,4 +72,31 @@ class Database:
 
             return messages
 
+        self.processed_messages = set()  # Conjunto para almacenar mensajes únicos procesados
 
+    def get_new_messages(self):
+        """Obtiene los mensajes de los últimos 90 minutos que no se hayan procesado antes."""
+        with self.conn.cursor() as cur:
+            # Calcular la hora actual menos 90 minutos
+            time_threshold = datetime.now() - timedelta(minutes=90)
+
+            # Obtener los mensajes cuyo 'fechareciente' sea mayor que la hora calculada
+            cur.execute("""
+                SELECT mensaje FROM logsfirewallids
+                WHERE mensaje IS NOT NULL 
+                AND mensaje != ''
+                AND fechareciente >= %s
+                ORDER BY fechareciente ASC
+            """, (time_threshold,))
+            
+            result = cur.fetchall()
+
+            # Filtrar mensajes que no han sido procesados antes
+            new_messages = []
+            for row in result:
+                message = row[0].strip()
+                if message and isinstance(message, str) and message not in self.processed_messages:
+                    new_messages.append(message)
+                    self.processed_messages.add(message)  # Marcar como procesado
+
+            return new_messages
