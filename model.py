@@ -8,6 +8,10 @@ import re
 import tensorflow as tf
 from datetime import datetime
 from tensorflow.keras.models import Sequential
+
+from tensorflow.keras.layers import Dropout, LSTM, Dense, Embedding, Bidirectional
+from tensorflow.keras.optimizers import Adam
+
 from tensorflow.keras.models import load_model  # Importamos load_model aquí
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.layers import Input
@@ -721,10 +725,10 @@ class Conversar:
             logger.info("El mensaje contiene palabras clave relacionadas con ayuda.")
             return "Parece que necesitas ayuda. ¿En qué puedo asistirte?"
 
-        # Análisis 2: Detectar si el mensaje es muy corto
+        # Análisis 2: Si el mensaje es muy corto, ajustar la temperatura en lugar de generar una respuesta genérica
         if len(input_text.split()) < 3:
-            logger.info("El mensaje es muy corto, generando una respuesta más conservadora.")
-            return "¿Podrías proporcionar más detalles?"
+            logger.info("El mensaje es muy corto, ajustando la temperatura.")
+            return None  # Deja que pase a la generación de respuesta con ajustes en la temperatura
 
         # Análisis 3: Detectar si el mensaje es muy largo
         if len(input_text.split()) > 50:
@@ -734,8 +738,9 @@ class Conversar:
         # Si no se detectan condiciones especiales, continuar con la generación de respuesta
         return None
 
+
     def generate_response(self, input_text, temperature=1.0, max_words=20):
-        """Genera una respuesta más avanzada basada en el input_text, generando una secuencia de palabras."""
+        """Genera una respuesta avanzada basada en el input_text, generando una secuencia de palabras."""
         
         # Realizar el análisis previo del mensaje
         pre_analysis_response = self.analyze_message(input_text)
@@ -744,6 +749,9 @@ class Conversar:
 
         if not self.is_trained:
             return "El modelo no está entrenado aún."
+
+        # Ajustar temperatura en función de la longitud del mensaje
+        temperature = self.ajustar_temperatura(input_text)
 
         # Preprocesar el texto de entrada
         input_sequence = self.tokenizer.texts_to_sequences([input_text])
@@ -785,23 +793,37 @@ class Conversar:
         # Combinar las palabras generadas en una oración
         return ' '.join(generated_response)
 
-
     def build_model(self):
         """Construir e inicializar el modelo secuencial"""
         logging.info("Inicializando el modelo...")
+
         try:
             self.model = Sequential()
+            
+            # Capa Embedding
             self.model.add(Embedding(input_dim=self.num_words, output_dim=128, input_length=self.max_sequence_length))
-            self.model.add(LSTM(128, return_sequences=False))
+            
+            # Capa LSTM Bidireccional con Dropout
+            self.model.add(Bidirectional(LSTM(128, return_sequences=True)))
+            self.model.add(Dropout(0.3))
+            self.model.add(Bidirectional(LSTM(128)))
+            self.model.add(Dropout(0.3))
+            
+            # Capa densa
             self.model.add(Dense(128, activation='relu'))
-            self.model.add(Dense(self.num_words, activation='softmax'))
-
+            
+            # Capa de salida con sigmoid para multilabel
+            self.model.add(Dense(self.num_words, activation='sigmoid'))  # Cambiar a softmax si es necesario
+            
             # Compilar el modelo
-            self.model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+            optimizer = Adam(learning_rate=0.0001)
+            self.model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+            
             logging.info("Modelo inicializado y compilado correctamente.")
         except Exception as e:
             logging.error(f"Error al construir el modelo: {e}")
             raise e
+
 
     def prepare_data(self):
         """Prepara los datos para el modelo de conversación"""
@@ -971,7 +993,7 @@ class Conversar:
         if len(contexto) > 5:  # Mantener el contexto con una longitud máxima de 5 entradas
             contexto.pop(0)
         
+        # Unir el contexto en una cadena de texto para generar una respuesta más coherente
         texto_completo = " ".join(contexto)
         return self.generate_response(texto_completo)
-    
-    
+
