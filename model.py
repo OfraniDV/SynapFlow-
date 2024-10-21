@@ -37,14 +37,143 @@ logger = logging.getLogger(__name__)
 class NumerologyModel:
     def __init__(self, db):
         self.db = db
-        self.model = None
-        self.mlb = None
-        self.is_trained = False
-        self.mapping = {}
-        self.vibrations_by_day = {}
-        self.most_delayed_numbers = {}
-        self.delayed_numbers = {}  # Asegurarse de que este atributo esté presente
-        self.max_sequence_length = None  # Inicializar la variable
+        self.model = None  # Modelo de red neuronal para numerología
+        self.mlb = None  # MultiLabelBinarizer para etiquetas de entrenamiento
+        self.is_trained = False  # Indicador de si el modelo ha sido entrenado
+        self.mapping = {}  # Mapeo de número de entrada a recomendaciones de salida
+        self.vibrations_by_day = {}  # Vibraciones numerológicas por día de la semana
+        self.most_delayed_numbers = {}  # Números con más días de atraso por categoría
+        self.delayed_numbers = {}  # Números atrasados agrupados por categoría
+        self.root_numbers = {}  # Raíces de números detectadas en fórmulas
+        self.inseparable_numbers = {}  # Números inseparables detectados en fórmulas
+        self.lottery_results = []  # Resultados de loterías extraídos de las fórmulas
+        self.max_sequence_length = None  # Longitud máxima de las secuencias para el modelo
+        self.current_date = None  # Fecha actual (se actualiza al procesar fórmulas)
+        
+        # Inicialización de otras variables utilizadas en patrones y predicciones
+        self.most_probable_numbers = []  # Números más probables basados en coincidencias de patrones
+        self.pattern_matches = {}  # Diccionario para rastrear coincidencias de números en patrones
+        self.lottery_results = []  # Resultados de loterías extraídos de las fórmulas
+
+        logging.info("Clase NumerologyModel inicializada con todos los atributos necesarios.")
+   
+    def load(self, model_file):
+        """Carga el modelo preentrenado desde el archivo."""
+        try:
+            # Cargar el modelo desde el archivo `.keras`
+            self.model = tf.keras.models.load_model(model_file)
+
+            # Cargar el MultiLabelBinarizer
+            mlb_path = 'mlb.pkl'
+            if os.path.exists(mlb_path):
+                with open(mlb_path, 'rb') as mlb_file:
+                    self.mlb = pickle.load(mlb_file)
+                logging.info("MultiLabelBinarizer cargado exitosamente.")
+            else:
+                logging.error(f"Archivo {mlb_path} no encontrado. No se pudo cargar el MultiLabelBinarizer.")
+                self.is_trained = False
+                return
+
+            # Cargar la longitud máxima de secuencias
+            seq_length_path = 'max_sequence_length.pkl'
+            if os.path.exists(seq_length_path):
+                with open(seq_length_path, 'rb') as seq_file:
+                    self.max_sequence_length = pickle.load(seq_file)
+                logging.info("Longitud máxima de secuencias cargada exitosamente.")
+            else:
+                logging.error(f"Archivo {seq_length_path} no encontrado. No se pudo cargar la longitud máxima de secuencia.")
+                self.is_trained = False
+                return
+
+            # Confirmar que el modelo se ha cargado correctamente
+            self.is_trained = True
+            logging.info(f"Modelo de numerología cargado exitosamente desde {model_file}.")
+
+            # Extraer reglas y patrones de las fórmulas
+            formulas = self.db.get_all_formulas()  # Obtener las fórmulas de la base de datos
+            if formulas:
+                logging.info("Extrayendo reglas de las fórmulas...")
+                self.extract_rules_from_formulas(formulas)
+            else:
+                logging.warning("No se encontraron fórmulas en la base de datos para extraer reglas.")
+
+        except Exception as e:
+            logging.error(f"Error al cargar el modelo de numerología: {e}")
+            self.is_trained = False
+
+
+    def ajuste_fino(self):
+        """Realiza un ajuste fino en el modelo de numerología utilizando nuevas interacciones y reglas extraídas."""
+        try:
+            # Obtener todas las fórmulas desde la tabla logsfirewallids
+            formulas = self.db.get_all_formulas()
+            if not formulas:
+                logging.error("No se encontraron fórmulas en la tabla logsfirewallids.")
+                return
+            
+            # Extraer reglas y patrones de las fórmulas
+            logging.info("Extrayendo reglas de las fórmulas...")
+            self.extract_rules_from_formulas(formulas)
+
+            # Preparar los datos actuales (nuevas fórmulas y nuevas interacciones)
+            logging.info("Iniciando la preparación de los datos para ajuste fino...")
+            self.prepare_data()
+
+            # Verificar que los datos de entrada y etiquetas existen
+            if not hasattr(self, 'X') or not hasattr(self, 'y'):
+                logging.error("Los datos para ajuste fino no están disponibles. Asegúrate de que los datos fueron cargados correctamente.")
+                return
+
+            if self.X.size == 0 or len(self.y) == 0:
+                logging.error("No hay datos suficientes para el ajuste fino. X o y están vacíos.")
+                return
+
+            # Si el modelo ya está entrenado, hacer un ajuste fino con los nuevos datos
+            if self.is_trained and self.model:
+                logging.info("Realizando ajuste fino del modelo de numerología...")
+
+                # Incorporar nuevas características en las secuencias para el ajuste
+                X_features = []
+                for idx, input_number in enumerate(self.X.flatten()):
+                    features = [int(input_number)]
+
+                    # Agregar las vibraciones del día y del número de entrada
+                    current_date = datetime.now()
+                    day_of_week_es = self.get_day_in_spanish(current_date.strftime("%A"))
+                    day_vibrations = self.vibrations_by_day.get(day_of_week_es, {})
+                    digits = day_vibrations.get('digits', [])
+                    features.extend([int(digit) for digit in digits if digit.isdigit()])
+
+                    number_vibrations = self.mapping.get(input_number, [])
+                    features.extend([int(num) for num in number_vibrations if num.isdigit()])
+
+                    # Verificar si el número es el más atrasado en alguna categoría
+                    for category in ['CENTENAS', 'DECENAS', 'TERMINALES', 'PAREJAS']:
+                        most_delayed = self.most_delayed_numbers.get(category)
+                        is_most_delayed = 1 if most_delayed and input_number == most_delayed['number'] else 0
+                        features.append(is_most_delayed)
+
+                    X_features.append(features)
+
+                # Realizar padding para las nuevas secuencias
+                X_train = pad_sequences(X_features, padding='post', dtype='int32', maxlen=self.max_sequence_length)
+
+                # Preprocesar las etiquetas
+                y_binarized = self.mlb.fit_transform(self.y)
+
+                # Realizar el ajuste fino entrenando el modelo con los nuevos datos
+                self.model.fit(X_train, y_binarized, epochs=2, batch_size=10, verbose=1)
+                logging.info("Ajuste fino del modelo de numerología completado exitosamente.")
+
+                # Guardar el modelo actualizado para futuras predicciones
+                self.model.save('numerology_model_finetuned.keras')
+                logging.info("Modelo ajustado guardado como 'numerology_model_finetuned.keras'.")
+
+            else:
+                logging.warning("El modelo no está entrenado o no se ha cargado correctamente. No se puede realizar el ajuste fino.")
+
+        except Exception as e:
+            logging.error(f"Error durante el ajuste fino del modelo de numerología: {e}")
 
     def prepare_data(self):
         # Obtener todas las fórmulas desde la tabla logsfirewallids
@@ -739,7 +868,7 @@ class Conversar:
         self.processed_messages = set()
 
         # Verificación inicial si deseas cargar un modelo preentrenado
-        # self.model = self.cargar_modelo()  # Descomentar si quieres cargar un modelo al inicio
+        self.model = self.cargar_modelo()  # Descomentar si quieres cargar un modelo al inicio
 
     def cargar_modelo(self):
         """Carga el modelo conversacional y el tokenizer"""
@@ -832,8 +961,12 @@ class Conversar:
         logger.info("Generando respuesta local.")
         local_response = self.model_generate_response(input_text, temperature, max_words)
 
-        # Retornamos la respuesta local como respaldo
-        return local_response
+        # Post-procesar la respuesta para eliminar '<OOV>'
+        final_response = self.post_process_response(local_response)
+
+        # Retornamos la respuesta post-procesada
+        return final_response
+
 
     def gpt4o_generate_response(self, input_text):
         api_url = 'https://api.openai.com/v1/chat/completions'  # URL actualizada para chat completions
@@ -920,8 +1053,6 @@ class Conversar:
 
         logger.info("Ajuste fino completado con éxito.")
 
-
-
     def model_generate_response(self, input_text, temperature=1.0, max_words=20):
         """Genera una respuesta utilizando el modelo local."""
         
@@ -954,10 +1085,10 @@ class Conversar:
 
             # Seleccionar el índice de la palabra predicha
             predicted_word_index = np.random.choice(range(self.num_words), p=predicted_probs.ravel())
-            predicted_word = self.tokenizer.index_word.get(predicted_word_index, '<UNK>')  # Recuperar la palabra correspondiente al índice
+            predicted_word = self.tokenizer.index_word.get(predicted_word_index, '<OOV>')  # Recuperar la palabra correspondiente al índice
 
             # Detener la generación si se encuentra una palabra desconocida o inválida
-            if predicted_word == '<UNK>' or predicted_word == '':
+            if predicted_word == '<OOV>' or predicted_word == '':
                 logger.warning("Se predijo una palabra desconocida o inválida, deteniendo la generación de respuesta.")
                 break
 
@@ -972,13 +1103,27 @@ class Conversar:
         response = ' '.join(generated_response)
         logger.info(f"Respuesta local generada: {response}")
 
+        # Si la respuesta es muy corta o carece de coherencia, proporcionar una respuesta por defecto
+        if len(response.split()) < 3:
+            return "Lo siento, no estoy seguro de cómo responder a eso. ¿Podrías reformular tu pregunta?"
+
         return response
+
+
     
     def post_process_response(self, response):
         """
         Aplica filtros y ajustes finales a la respuesta generada para mejorar la coherencia.
         Elimina repeticiones, corrige errores gramaticales simples y mejora la estructura.
         """
+        logger = logging.getLogger(__name__)
+
+        # Eliminar etiquetas <OOV>
+        response = response.replace('<OOV>', '').strip()
+
+        # Eliminar espacios extra resultantes de la eliminación
+        response = re.sub(r'\s+', ' ', response)
+
         # Eliminar posibles repeticiones de palabras y frases
         words = response.split()
         filtered_words = []
@@ -990,27 +1135,29 @@ class Conversar:
         # Reconstruir la respuesta filtrada
         response = ' '.join(filtered_words)
 
-        # Corregir la gramática y estructura con spaCy
-        doc = nlp(response)
-        response = ' '.join([token.text for token in doc])
+        # Corregir la gramática y estructura con spaCy (si está implementado)
+        if nlp:
+            doc = nlp(response)
+            response = ' '.join([token.text for token in doc])
 
-        # Eliminar frases redundantes (opcional, si deseas analizar las frases también)
-        sentences = list(doc.sents)
-        filtered_sentences = []
-        for i, sent in enumerate(sentences):
-            if i > 0 and str(sentences[i-1]) == str(sent):
-                continue  # Omitir si la oración es una repetición exacta de la anterior
-            filtered_sentences.append(str(sent))
-        
-        response = ' '.join(filtered_sentences)
+            # Eliminar frases redundantes (opcional)
+            sentences = list(doc.sents)
+            filtered_sentences = []
+            for i, sent in enumerate(sentences):
+                if i > 0 and str(sentences[i-1]).strip() == str(sent).strip():
+                    continue  # Omitir si la oración es una repetición exacta de la anterior
+                filtered_sentences.append(str(sent))
+            response = ' '.join(filtered_sentences)
 
         # Corregir posibles errores de puntuación o gramática básica
         response = re.sub(r'\s+', ' ', response)  # Unificar espacios múltiples en uno solo
         response = re.sub(r'\.\.+', '.', response)  # Reemplazar múltiples puntos por un solo punto
-        response = re.sub(r'\s,', ',', response)  # Corregir espacios antes de las comas
-        response = re.sub(r'\s\.', '.', response)  # Corregir espacios antes de los puntos
+        response = re.sub(r'\s,', ',', response)    # Corregir espacios antes de las comas
+        response = re.sub(r'\s\.', '.', response)   # Corregir espacios antes de los puntos
 
+        logger.info(f"Respuesta post-procesada: {response}")
         return response
+
 
 
     def build_model(self):
@@ -1151,7 +1298,7 @@ class Conversar:
             # Indicar que el modelo fue entrenado correctamente
             self.is_trained = True
             logging.info("Entrenamiento del modelo completado con éxito.")
-        
+
         except Exception as e:
             logging.error(f"Error durante el entrenamiento del modelo: {e}")
             self.is_trained = False

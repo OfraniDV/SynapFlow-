@@ -39,7 +39,22 @@ if __name__ == "__main__":
     path = '.'  # Directorio a observar (directorio actual)
 
     # Archivos que deseas monitorear
-    files_to_watch = ['bot.py', '.env', 'model.py', 'database.py', 'scheduler.py']
+    files_to_watch = [
+        'bot.py', 
+        '.env', 
+        'watcher.py',
+        'model.py', 
+        'database.py', 
+        'scheduler.py'
+    ]
+
+    # Agregar archivos de la carpeta commands
+    commands_directory = './commands'
+    if os.path.exists(commands_directory):
+        # Listar todos los archivos en la carpeta commands
+        for filename in os.listdir(commands_directory):
+            if filename.endswith('.py'):  # Solo monitorear archivos Python
+                files_to_watch.append(os.path.join(commands_directory, filename))
 
     event_handler = MyHandler(script_name, files_to_watch)
     observer = Observer()

@@ -22,48 +22,63 @@ class Database:
 
     def create_tables(self):
         """Crea las tablas necesarias si no existen"""
-        with self.conn.cursor() as cur:
-            # Tabla para mensajes procesados
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS processed_messages (
-                    id SERIAL PRIMARY KEY,
-                    mensaje TEXT UNIQUE NOT NULL,
-                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            
-            # Tabla logsfirewallids (ya está en NodeJS pero la incluyo por seguridad)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS logsfirewallids (
-                    id SERIAL PRIMARY KEY,
-                    user_id BIGINT,
-                    nombre TEXT,
-                    alias TEXT,
-                    grupo BIGINT,
-                    nombregrupo TEXT,
-                    privado BOOLEAN,
-                    fechareciente TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    ultima_notificacion TIMESTAMP DEFAULT NULL,
-                    notificado BOOLEAN DEFAULT false,
-                    expulsado BOOLEAN DEFAULT false,
-                    biografia TEXT,
-                    chatgpt BOOLEAN DEFAULT false,
-                    mensaje TEXT
-                );
-            """)
+        try:
+            with self.conn.cursor() as cur:
+                # Tabla para mensajes procesados
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS processed_messages (
+                        id SERIAL PRIMARY KEY,
+                        mensaje TEXT UNIQUE NOT NULL,
+                        processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                
+                # Tabla logsfirewallids (ya está en NodeJS pero la incluyo por seguridad)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS logsfirewallids (
+                        id SERIAL PRIMARY KEY,
+                        user_id BIGINT,
+                        nombre TEXT,
+                        alias TEXT,
+                        grupo BIGINT,
+                        nombregrupo TEXT,
+                        privado BOOLEAN,
+                        fechareciente TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        ultima_notificacion TIMESTAMP DEFAULT NULL,
+                        notificado BOOLEAN DEFAULT false,
+                        expulsado BOOLEAN DEFAULT false,
+                        biografia TEXT,
+                        chatgpt BOOLEAN DEFAULT false,
+                        mensaje TEXT
+                    );
+                """)
 
-            # Nueva tabla group_converse
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS group_converse (
-                    id SERIAL PRIMARY KEY,
-                    type TEXT,
-                    serial TEXT,
-                    group_id BIGINT UNIQUE NOT NULL,
-                    inserted_at TIMESTAMP DEFAULT NOW()
-                );
-            """)
-            
-            self.conn.commit()
+                # Crear tabla para retroalimentación
+                cur.execute('''
+                    CREATE TABLE IF NOT EXISTS feedback (
+                        id SERIAL PRIMARY KEY,
+                        user_id INTEGER NOT NULL,
+                        feedback_type TEXT NOT NULL,
+                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                self.conn.commit()
+                logging.info("Tablas de la base de datos verificadas/creadas.")
+
+                # Nueva tabla group_converse
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS group_converse (
+                        id SERIAL PRIMARY KEY,
+                        type TEXT,
+                        serial TEXT,
+                        group_id BIGINT UNIQUE NOT NULL,
+                        inserted_at TIMESTAMP DEFAULT NOW()
+                    );
+                """)
+                self.conn.commit()
+        except Exception as e:
+            logging.error(f"Error al crear tablas en la base de datos: {e}")
+
 
     def add_group(self, group_id, group_type, serial):
         """Añade un nuevo grupo a la tabla group_converse si no existe"""
@@ -112,8 +127,6 @@ class Database:
         except Exception as e:
             logging.error(f"Error al obtener los grupos: {e}")
             return []
-
-
 
     def get_owner_info(self, owner_id):
         """Obtiene la información más reciente del propietario desde logsfirewallids"""
@@ -191,3 +204,49 @@ class Database:
                 ON CONFLICT DO NOTHING
             """, (message,))
             self.conn.commit()
+    
+    def get_numerology_adjustments(self):
+        """Obtiene los nuevos datos o interacciones para realizar el ajuste fino del modelo de numerología."""
+        try:
+            with self.conn.cursor() as cur:
+                # Seleccionar los mensajes más recientes que contienen ajustes de numerología
+                cur.execute("""
+                    SELECT mensaje FROM logsfirewallids
+                    WHERE mensaje IS NOT NULL
+                    AND mensaje != ''
+                    AND fechareciente >= NOW() - INTERVAL '1 DAY'  -- Ajuste de las últimas 24 horas
+                    ORDER BY fechareciente ASC
+                """)
+                result = cur.fetchall()
+                return [row[0] for row in result if row[0]]
+        except Exception as e:
+            logging.error(f"Error al obtener los ajustes de numerología: {e}")
+            return []
+
+    def verificar_grupo_activado(self, group_id):
+        """Verifica si un grupo está activado en la tabla group_converse."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT COUNT(*) FROM group_converse WHERE group_id = %s
+                """, (group_id,))
+                result = cur.fetchone()
+                return result[0] > 0  # Devuelve True si el grupo está registrado, False si no
+        except Exception as e:
+            self.conn.rollback()  # Realiza un rollback en caso de error
+            logging.error(f"Error verificando si el grupo está activado: {e}")
+            return False
+
+
+    def save_feedback(self, user_id, feedback_type):
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute('''
+                    INSERT INTO feedback (user_id, feedback_type)
+                    VALUES (%s, %s)
+                ''', (user_id, feedback_type))
+                self.conn.commit()
+                logging.info(f"Retroalimentación guardada para el usuario {user_id}.")
+        except Exception as e:
+            logging.error(f"Error al guardar retroalimentación en la base de datos: {e}")
+            raise e

@@ -37,6 +37,23 @@ async def synap(update: Update, context: ContextTypes.DEFAULT_TYPE, db, model, c
         )
         return
 
+    # Aquí puedes verificar si el grupo está desactivado en la base de datos
+    grupo_activado = db.verificar_grupo_activado(update.message.chat_id)  # Esta función es un ejemplo
+    if not grupo_activado:
+        logger.info(f"El grupo {update.message.chat_id} está desactivado, usando el modelo local.")
+        await update.message.reply_text("Este grupo está desactivado. Usando predicciones del modelo local.", parse_mode='HTML')
+
+        # Generar la respuesta utilizando el modelo local
+        user_input = ' '.join(context.args)
+        if not user_input:
+            await update.message.reply_text('Por favor, proporciona un número en tu consulta.', parse_mode='HTML')
+            return
+
+        local_response = conversar_model.generate_response(user_input)
+        await update.message.reply_text(local_response, parse_mode='HTML')
+        return
+
+    # Continuar con el proceso habitual si el grupo está activado
     # Verificar si el modelo de numerología está entrenado
     if not model.is_trained:
         await update.message.reply_text('⚠️ El modelo de predicciones no está disponible en este momento.', parse_mode='HTML')
