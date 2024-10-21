@@ -1,4 +1,7 @@
 #model.py
+
+import requests
+import json
 import os
 import pickle
 import time
@@ -29,23 +32,6 @@ load_dotenv()
 # Configuración del logger
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Importamos OpenAI
-from openai import OpenAIError, APIConnectionError, AuthenticationError
-
-# Instanciamos el cliente de OpenAI
-import openai
-client = openai
-
-# Obtener la clave API y organización desde el archivo .env
-openai.organization = os.getenv("OPENAI_ORGANIZATION_ID")
-openai.api_key = os.getenv("OPENAI_API_KEY")
-
-# Verificar si las variables están correctamente cargadas
-if not openai.api_key:
-    raise ValueError("Falta la clave API de OpenAI.")
-if not openai.organization:
-    raise ValueError("Falta la ID de organización de OpenAI.")
 
 
 class NumerologyModel:
@@ -850,20 +836,29 @@ class Conversar:
         return local_response
 
     def gpt4o_generate_response(self, input_text):
-        try:
-            response = openai.ChatCompletion.create(
-                model="gpt-4o-mini",  # Especifica el modelo gpt-4o-mini
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant."},
-                    {"role": "user", "content": input_text}
-                ],
-                max_tokens=150,
-                timeout=20  # Ajusta este valor si es necesario
-            )
-            return response['choices'][0]['message']['content']
-        except Exception as e:
-            logger.error(f"Error al generar respuesta con GPT-4o: {e}")
-            return None
+        api_url = 'https://api.openai.com/v1/chat/completions'  # URL actualizada para chat completions
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {os.getenv("OPENAI_API_KEY")}'
+        }
+        data = {
+            'model': 'gpt-4o-mini',  # Asegúrate de que el modelo esté correctamente especificado
+            'messages': [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": input_text}
+            ],
+            'max_tokens': 150
+        }
+        
+        response = requests.post(api_url, headers=headers, json=data)
+        
+        if response.status_code == 200:
+            response_data = response.json()
+            return response_data['choices'][0]['message']['content']
+        else:
+            error_message = f"Failed to generate response from OpenAI: {response.status_code}, {response.text}"
+            logger.error(error_message)
+            return None  # o manejar de otra manera, según la lógica de tu aplicación
 
 
     def comparar_respuestas(self, local_response, gpt_response):
