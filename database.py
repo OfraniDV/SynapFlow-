@@ -77,12 +77,18 @@ class Database:
 
     def is_group_registered(self, group_id):
         """Verifica si un grupo ya está registrado en la base de datos"""
-        with self.conn.cursor() as cur:
-            cur.execute("""
-                SELECT COUNT(*) FROM group_converse WHERE group_id = %s
-            """, (group_id,))
-            result = cur.fetchone()
-            return result[0] > 0
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT COUNT(*) FROM group_converse WHERE group_id = %s
+                """, (group_id,))
+                result = cur.fetchone()
+                return result[0] > 0
+        except Exception as e:
+            self.conn.rollback()  # Si ocurre un error, hacemos rollback
+            logging.error(f"Error verificando el grupo: {e}")
+            return False  # Opcional, depende de cómo manejes el flujo en caso de error
+
         
     def delete_group(self, group_id):
         """
