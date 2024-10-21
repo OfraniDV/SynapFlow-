@@ -53,9 +53,31 @@ class NumerologyModel:
         # Inicialización de otras variables utilizadas en patrones y predicciones
         self.most_probable_numbers = []  # Números más probables basados en coincidencias de patrones
         self.pattern_matches = {}  # Diccionario para rastrear coincidencias de números en patrones
-        self.lottery_results = []  # Resultados de loterías extraídos de las fórmulas
-
+        
         logging.info("Clase NumerologyModel inicializada con todos los atributos necesarios.")
+
+    def generate_features(self, input_number):
+        """Genera características para un número dado basado en vibraciones, atrasos y otros patrones."""
+        features = [input_number]
+        
+        # Agregar vibraciones del día
+        current_date = datetime.now()
+        day_of_week_es = self.get_day_in_spanish(current_date.strftime("%A"))
+        day_vibrations = self.vibrations_by_day.get(day_of_week_es, {})
+        digits = day_vibrations.get('digits', [])
+        features.extend([int(digit) for digit in digits if digit.isdigit()])
+
+        # Agregar vibraciones del número
+        number_vibrations = self.mapping.get(input_number, [])
+        features.extend([int(num) for num in number_vibrations if num.isdigit()])
+
+        # Agregar indicadores de números más atrasados
+        for category in ['CENTENAS', 'DECENAS', 'TERMINALES', 'PAREJAS']:
+            most_delayed = self.most_delayed_numbers.get(category)
+            is_most_delayed = 1 if most_delayed and input_number == most_delayed['number'] else 0
+            features.append(is_most_delayed)
+
+        return features
    
     def load(self, model_file):
         """Carga el modelo preentrenado desde el archivo."""
@@ -564,33 +586,9 @@ class NumerologyModel:
                 self.is_trained = False
                 return
 
-            # Incorporar vibraciones y otros datos en las características
+            # Incorporar vibraciones y otros datos en las características usando la nueva función generate_features
             logging.info("Incorporando vibraciones y otros datos en las características...")
-            X_features = []
-            for idx, input_number in enumerate(self.X.flatten()):
-                # Convertir el input_number a entero
-                input_number = int(input_number)
-                # Crear una lista de características
-                features = [input_number]
-
-                # Agregar día de la semana como característica
-                current_date = datetime.now()
-                day_of_week_es = self.get_day_in_spanish(current_date.strftime("%A"))
-                day_vibrations = self.vibrations_by_day.get(day_of_week_es, {})
-                digits = day_vibrations.get('digits', [])
-                features.extend([int(digit) for digit in digits if digit.isdigit()])
-
-                # Agregar vibraciones del número de entrada si existen
-                number_vibrations = self.mapping.get(input_number, [])
-                features.extend([int(num) for num in number_vibrations if num.isdigit()])
-
-                # Agregar indicadores si el número de entrada es igual al más atrasado en cada categoría
-                for category in ['CENTENAS', 'DECENAS', 'TERMINALES', 'PAREJAS']:
-                    most_delayed = self.most_delayed_numbers.get(category)
-                    is_most_delayed = 1 if most_delayed and input_number == most_delayed['number'] else 0
-                    features.append(is_most_delayed)
-
-                X_features.append(features)
+            X_features = [self.generate_features(int(input_number)) for input_number in self.X.flatten()]
 
             # Verificar que X_features no esté vacío antes de calcular max_sequence_length
             if not X_features or len(X_features) == 0:
@@ -666,30 +664,10 @@ class NumerologyModel:
         elif self.is_trained and self.model and self.mlb and self.max_sequence_length:
             try:
                 logging.info(f"Realizando predicción para el número: {input_number}")
-                
-                # Crear las mismas características que en el entrenamiento
-                features = [input_number]
-                logging.debug(f"Número de entrada: {input_number}")
 
-                # Agregar día de la semana como característica
-                current_date = datetime.now()
-                day_of_week_es = self.get_day_in_spanish(current_date.strftime("%A"))
-                day_vibrations = self.vibrations_by_day.get(day_of_week_es, {})
-                digits = day_vibrations.get('digits', [])
-                features.extend([int(digit) for digit in digits if digit.isdigit()])
-                logging.debug(f"Vibraciones del día {day_of_week_es}: {digits}")
-
-                # Agregar vibraciones del número de entrada si existen
-                number_vibrations = self.mapping.get(input_number, [])
-                features.extend([int(num) for num in number_vibrations if num.isdigit()])
-                logging.debug(f"Vibraciones del número de entrada: {number_vibrations}")
-
-                # Agregar indicadores si el número de entrada es igual al más atrasado en cada categoría
-                for category in ['CENTENAS', 'DECENAS', 'TERMINALES', 'PAREJAS']:
-                    most_delayed = self.most_delayed_numbers.get(category)
-                    is_most_delayed = 1 if most_delayed and input_number == most_delayed['number'] else 0
-                    features.append(is_most_delayed)
-                    logging.debug(f"Indicador para categoría {category}: {is_most_delayed}")
+                # Generar las características usando la nueva función generate_features
+                features = self.generate_features(input_number)
+                logging.debug(f"Características generadas para el número {input_number}: {features}")
 
                 # Convertir las características a una matriz numpy y aplicar padding
                 input_features = pad_sequences([features], padding='post', dtype='int32', maxlen=self.max_sequence_length)
@@ -977,10 +955,18 @@ class Conversar:
         data = {
             'model': 'gpt-4o-mini',  # Asegúrate de que el modelo esté correctamente especificado
             'messages': [
-                {"role": "system", "content": "You are a helpful assistant."},
+                {
+                    "role": "system", 
+                    "content": (
+                        "Eres un gran científico de numerología especializado en predicciones de loterías. "
+                        "Responde de manera precisa, utilizando un enfoque matemático y científico, "
+                        "siempre en español a menos que el usuario hable en otro idioma."
+                    )
+                },
                 {"role": "user", "content": input_text}
             ],
-            'max_tokens': 150
+            'max_tokens': 150,
+            'temperature': 0.7  # Control de creatividad
         }
         
         response = requests.post(api_url, headers=headers, json=data)
@@ -992,6 +978,7 @@ class Conversar:
             error_message = f"Failed to generate response from OpenAI: {response.status_code}, {response.text}"
             logger.error(error_message)
             return None  # o manejar de otra manera, según la lógica de tu aplicación
+
 
 
     def comparar_respuestas(self, local_response, gpt_response):
