@@ -43,11 +43,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, num
         await update.message.reply_text(response_message, parse_mode='HTML')
         return
 
-    # Verificar si es un grupo autorizado
+   # Verificar si es un grupo autorizado
     if chat_type != 'private':
+        logger.info(f"Verificando si el grupo con ID {group_id} está registrado en la base de datos.")
         if not db.is_group_registered(group_id):
+            logger.warning(f"El grupo {group_id} no está registrado. Enviando mensaje de no autorizado.")
             await update.message.reply_text("Este bot no está autorizado para responder en este grupo.")
             return
+        logger.info(f"El grupo {group_id} está registrado y autorizado para recibir respuestas.")
+
 
     def contains_number(text):
         return bool(re.search(r'\b(?:cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|\d+)\b', text.lower()))
@@ -63,30 +67,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, num
 
         # Generar respuesta del modelo de numerología
         try:
+            logger.info(f"Procesando número: {number} para generar predicciones de numerología.")
             predicted_numbers = numerology_model.predict(number)
+            logger.info(f"Números predichos por el modelo de numerología: {predicted_numbers}")
             numerology_response = f"#Numerologiaenentrenamiento\nLos números derivados son: {', '.join(map(str, predicted_numbers))}."
         except Exception as e:
-            logger.error(f"Error en predicción numerológica: {e}")
+            logger.error(f"Error en predicción numerológica para el número {number}: {e}")
             numerology_response = "#Numerologiaenentrenamiento\nError al procesar el número proporcionado."
+
 
         # Respuesta del modelo local
         try:
+            logger.info(f"Generando respuesta local para el mensaje: {user_message}")
             local_response = conversar_model.model_generate_response(user_message)
+            logger.info(f"Respuesta generada por el modelo local: {local_response}")
             final_local_response = f"#ModeloConversacionenentrenamiento\n{local_response}"
         except Exception as e:
-            logger.error(f"Error en modelo local: {e}")
+            logger.error(f"Error al generar respuesta local para el mensaje {user_message}: {e}")
             final_local_response = "#ModeloConversacionenentrenamiento\nError al generar respuesta local."
+
 
         # Respuesta de GPT-4
         try:
+            logger.info(f"Generando respuesta GPT-4 para el mensaje: {user_message}")
             gpt_response = conversar_model.gpt4o_generate_response(user_message)
+            logger.info(f"Respuesta generada por GPT-4: {gpt_response}")
             final_gpt_response = f"#GPT4Entrenandomismodelos\n{gpt_response}"
 
             # Almacenar la respuesta de GPT-4 para el ajuste fino de ambos modelos
-            conversar_model.almacenar_para_ajuste_fino(user_message, gpt_response)  # Guardar para ajustes finos
+            logger.info(f"Almacenando respuesta de GPT-4 para ajuste fino.")
+            conversar_model.almacenar_para_ajuste_fino(user_message, gpt_response)
         except Exception as e:
-            logger.error(f"Error en GPT-4: {e}")
+            logger.error(f"Error en GPT-4 al procesar el mensaje {user_message}: {e}")
             final_gpt_response = "#GPT4Entrenandomismodelos\nError al generar respuesta GPT-4."
+
 
         # Enviar todas las respuestas en mensajes separados
         await update.message.reply_text(numerology_response, parse_mode='HTML')
@@ -97,8 +111,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, num
 
     # Si no contiene números, proceder con el modelo conversacional
     if not conversar_model.is_trained:
+        logger.warning(f"El modelo conversacional no está entrenado. No se puede generar respuesta para el mensaje: {user_message}")
         await update.message.reply_text('El modelo conversacional no está disponible en este momento.')
         return
 
+    logger.info(f"Generando respuesta conversacional para el mensaje: {user_message}")
     response = conversar_model.generate_response(user_message)
+    logger.info(f"Respuesta generada por el modelo conversacional: {response}")
     await update.message.reply_text(f"🤖 <b>Respuesta:</b> {response}", parse_mode='HTML')
+

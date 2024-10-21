@@ -82,27 +82,36 @@ class Database:
 
     def add_group(self, group_id, group_type, serial):
         """Añade un nuevo grupo a la tabla group_converse si no existe"""
-        with self.conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO group_converse (group_id, type, serial)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (group_id) DO NOTHING
-            """, (group_id, group_type, serial))
-            self.conn.commit()
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO group_converse (group_id, type, serial)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (group_id) DO NOTHING
+                """, (group_id, group_type, serial))
+                self.conn.commit()
+                logging.info(f"Grupo {group_id} añadido exitosamente a la base de datos.")
+        except Exception as e:
+            logging.error(f"Error al añadir el grupo {group_id}: {e}")
+
 
     def is_group_registered(self, group_id):
         """Verifica si un grupo ya está registrado en la base de datos"""
         try:
             with self.conn.cursor() as cur:
+                logging.info(f"Verificando si el grupo {group_id} está registrado en la base de datos")
                 cur.execute("""
                     SELECT COUNT(*) FROM group_converse WHERE group_id = %s
                 """, (group_id,))
                 result = cur.fetchone()
+                logging.info(f"Resultado de la consulta para el grupo {group_id}: {result[0]}")
                 return result[0] > 0
         except Exception as e:
             self.conn.rollback()  # Si ocurre un error, hacemos rollback
             logging.error(f"Error verificando el grupo: {e}")
-            return False  # Opcional, depende de cómo manejes el flujo en caso de error
+            return False
+
+
 
         
     def delete_group(self, group_id):
