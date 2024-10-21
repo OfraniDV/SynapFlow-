@@ -80,9 +80,9 @@ class NumerologyModel:
         return features
    
     def load(self, model_file):
-        """Carga el modelo preentrenado desde el archivo."""
+        """Carga el modelo preentrenado desde el archivo y aplica ajustes finos si existen."""
         try:
-            # Cargar el modelo desde el archivo `.keras`
+            # Cargar el modelo
             self.model = tf.keras.models.load_model(model_file)
 
             # Cargar el MultiLabelBinarizer
@@ -92,7 +92,7 @@ class NumerologyModel:
                     self.mlb = pickle.load(mlb_file)
                 logging.info("MultiLabelBinarizer cargado exitosamente.")
             else:
-                logging.error(f"Archivo {mlb_path} no encontrado. No se pudo cargar el MultiLabelBinarizer.")
+                logging.error(f"Archivo {mlb_path} no encontrado.")
                 self.is_trained = False
                 return
 
@@ -103,99 +103,154 @@ class NumerologyModel:
                     self.max_sequence_length = pickle.load(seq_file)
                 logging.info("Longitud máxima de secuencias cargada exitosamente.")
             else:
-                logging.error(f"Archivo {seq_length_path} no encontrado. No se pudo cargar la longitud máxima de secuencia.")
+                logging.error(f"Archivo {seq_length_path} no encontrado.")
                 self.is_trained = False
                 return
 
-            # Confirmar que el modelo se ha cargado correctamente
-            self.is_trained = True
-            logging.info(f"Modelo de numerología cargado exitosamente desde {model_file}.")
-
-            # Extraer reglas y patrones de las fórmulas
-            formulas = self.db.get_all_formulas()  # Obtener las fórmulas de la base de datos
+            # Extraer reglas de las fórmulas inmediatamente después de cargar el modelo
+            formulas = self.db.get_all_formulas()
             if formulas:
-                logging.info("Extrayendo reglas de las fórmulas...")
+                logging.info("Extrayendo reglas de las fórmulas después de cargar el modelo...")
                 self.extract_rules_from_formulas(formulas)
             else:
-                logging.warning("No se encontraron fórmulas en la base de datos para extraer reglas.")
+                logging.error("No se encontraron fórmulas al cargar el modelo.")
+                return
+
+            # Marcar el modelo como cargado
+            self.is_trained = True
+            logging.info("Modelo de numerología cargado exitosamente.")
+
+            # Aplicar ajustes finos si existen suficientes datos
+            ajuste_fino_path = 'ajuste_fino_datos.pkl'
+            if os.path.exists(ajuste_fino_path):
+                logging.info("Aplicando ajustes finos guardados.")
+                self.aplicar_ajustes_finos(ajuste_fino_path)
 
         except Exception as e:
             logging.error(f"Error al cargar el modelo de numerología: {e}")
             self.is_trained = False
 
+    def aplicar_ajustes_finos(self, ajuste_fino_path):
+        """Aplica los ajustes finos guardados al modelo basado en las fórmulas extraídas."""
+        try:
+            # Cargar los datos para el ajuste fino
+            datos_para_ajuste = []
+            with open(ajuste_fino_path, 'rb') as f:
+                while True:
+                    try:
+                        datos_para_ajuste.append(pickle.load(f))
+                    except EOFError:
+                        break
+
+            # Asegurarse de que los datos para ajuste fino están basados en las fórmulas extraídas
+            if len(self.mapping) == 0 or len(self.vibrations_by_day) == 0:
+                logging.warning("No se han extraído suficientes reglas para realizar el ajuste fino.")
+                return
+
+            # Asegurarse de que hay suficientes datos para el ajuste fino
+            if len(datos_para_ajuste) < 10:
+                logging.info("No hay suficientes datos para realizar un ajuste fino.")
+                return
+
+            # Extraer las entradas y las etiquetas
+            inputs = []
+            respuestas = []
+            for data in datos_para_ajuste:
+                try:
+                    # Verificar que el input sea un número válido
+                    input_number = int(data["input"])
+                    inputs.append(input_number)
+                    respuestas.append(data["response"])
+                except ValueError:
+                    logging.warning(f"Entrada inválida encontrada y omitida: {data['input']}")
+
+            # Si no hay entradas válidas, salir
+            if not inputs:
+                logging.warning("No se encontraron entradas válidas para el ajuste fino.")
+                return
+
+            # Generar características y etiquetas a partir de las fórmulas
+            nuevas_X = [self.generate_features(input_number) for input_number in inputs]
+            nuevas_X = pad_sequences(nuevas_X, maxlen=self.max_sequence_length)
+            nuevas_y = self.mlb.fit_transform(respuestas)
+
+            # Realizar el ajuste fino del modelo basado en las fórmulas
+            self.model.fit(nuevas_X, nuevas_y, epochs=2, batch_size=10)
+            logging.info("Ajustes finos aplicados exitosamente basados en las fórmulas.")
+
+        except Exception as e:
+            logging.error(f"Error al aplicar ajustes finos: {e}")
 
     def ajuste_fino(self):
-        """Realiza un ajuste fino en el modelo de numerología utilizando nuevas interacciones y reglas extraídas."""
+        """Realiza un ajuste fino en el modelo de numerología utilizando solo fórmulas extraídas."""
         try:
             # Obtener todas las fórmulas desde la tabla logsfirewallids
             formulas = self.db.get_all_formulas()
             if not formulas:
                 logging.error("No se encontraron fórmulas en la tabla logsfirewallids.")
                 return
-            
-            # Extraer reglas y patrones de las fórmulas
+
+            # Extraer reglas de las fórmulas
             logging.info("Extrayendo reglas de las fórmulas...")
             self.extract_rules_from_formulas(formulas)
 
-            # Preparar los datos actuales (nuevas fórmulas y nuevas interacciones)
+            # Si no se han extraído suficientes reglas, no realizar el ajuste fino
+            if len(self.mapping) == 0:
+                logging.error("No se encontraron suficientes reglas para el ajuste fino.")
+                return
+
+            # Preparar los datos actuales (fórmulas e interacciones)
             logging.info("Iniciando la preparación de los datos para ajuste fino...")
             self.prepare_data()
 
-            # Verificar que los datos de entrada y etiquetas existen
-            if not hasattr(self, 'X') or not hasattr(self, 'y'):
-                logging.error("Los datos para ajuste fino no están disponibles. Asegúrate de que los datos fueron cargados correctamente.")
+            if not hasattr(self, 'X') or not hasattr(self, 'y') or self.X.size == 0 or len(self.y) == 0:
+                logging.error("No hay suficientes datos para realizar el ajuste fino.")
                 return
 
-            if self.X.size == 0 or len(self.y) == 0:
-                logging.error("No hay datos suficientes para el ajuste fino. X o y están vacíos.")
-                return
+            # Realizar ajuste fino basado en las reglas extraídas de las fórmulas
+            logging.info("Realizando ajuste fino del modelo basado en las fórmulas...")
+            X_train = self.generar_caracteristicas(self.X)
+            y_binarized = self.preprocesar_etiquetas(self.y)
 
-            # Si el modelo ya está entrenado, hacer un ajuste fino con los nuevos datos
-            if self.is_trained and self.model:
-                logging.info("Realizando ajuste fino del modelo de numerología...")
+            self.model.fit(X_train, y_binarized, epochs=2, batch_size=10, verbose=1)
+            logging.info("Ajuste fino completado exitosamente.")
 
-                # Incorporar nuevas características en las secuencias para el ajuste
-                X_features = []
-                for idx, input_number in enumerate(self.X.flatten()):
-                    features = [int(input_number)]
-
-                    # Agregar las vibraciones del día y del número de entrada
-                    current_date = datetime.now()
-                    day_of_week_es = self.get_day_in_spanish(current_date.strftime("%A"))
-                    day_vibrations = self.vibrations_by_day.get(day_of_week_es, {})
-                    digits = day_vibrations.get('digits', [])
-                    features.extend([int(digit) for digit in digits if digit.isdigit()])
-
-                    number_vibrations = self.mapping.get(input_number, [])
-                    features.extend([int(num) for num in number_vibrations if num.isdigit()])
-
-                    # Verificar si el número es el más atrasado en alguna categoría
-                    for category in ['CENTENAS', 'DECENAS', 'TERMINALES', 'PAREJAS']:
-                        most_delayed = self.most_delayed_numbers.get(category)
-                        is_most_delayed = 1 if most_delayed and input_number == most_delayed['number'] else 0
-                        features.append(is_most_delayed)
-
-                    X_features.append(features)
-
-                # Realizar padding para las nuevas secuencias
-                X_train = pad_sequences(X_features, padding='post', dtype='int32', maxlen=self.max_sequence_length)
-
-                # Preprocesar las etiquetas
-                y_binarized = self.mlb.fit_transform(self.y)
-
-                # Realizar el ajuste fino entrenando el modelo con los nuevos datos
-                self.model.fit(X_train, y_binarized, epochs=2, batch_size=10, verbose=1)
-                logging.info("Ajuste fino del modelo de numerología completado exitosamente.")
-
-                # Guardar el modelo actualizado para futuras predicciones
-                self.model.save('numerology_model_finetuned.keras')
-                logging.info("Modelo ajustado guardado como 'numerology_model_finetuned.keras'.")
-
-            else:
-                logging.warning("El modelo no está entrenado o no se ha cargado correctamente. No se puede realizar el ajuste fino.")
+            # Guardar el modelo ajustado
+            self.model.save('numerology_model_finetuned.keras')
+            logging.info("Modelo ajustado guardado como 'numerology_model_finetuned.keras'.")
 
         except Exception as e:
-            logging.error(f"Error durante el ajuste fino del modelo de numerología: {e}")
+            logging.error(f"Error durante el ajuste fino: {e}")
+
+    def generar_caracteristicas(self, X_data):
+        """Genera las características para el ajuste fino."""
+        try:
+            X_features = []
+            for input_number in X_data.flatten():
+                input_number = int(input_number)
+                features = self.generate_features(input_number)
+                X_features.append(features)
+
+            # Realizar padding en las secuencias de características
+            X_train = pad_sequences(X_features, padding='post', dtype='int32', maxlen=self.max_sequence_length)
+            logging.info(f"Forma final de X_train después del padding: {X_train.shape}")
+            return X_train
+
+        except Exception as e:
+            logging.error(f"Error al generar características para ajuste fino: {e}")
+            return None
+
+    def preprocesar_etiquetas(self, y_data):
+        """Preprocesa las etiquetas de los datos para el ajuste fino."""
+        try:
+            y_binarized = self.mlb.fit_transform(y_data)
+            logging.info(f"Forma de y_binarized después de aplicar MultiLabelBinarizer: {y_binarized.shape}")
+            return y_binarized
+
+        except Exception as e:
+            logging.error(f"Error al preprocesar etiquetas para ajuste fino: {e}")
+            return None
+
 
     def prepare_data(self):
         # Obtener todas las fórmulas desde la tabla logsfirewallids
@@ -907,43 +962,54 @@ class Conversar:
         return None
 
 
-    def generate_response(self, input_text, temperature=1.0, max_words=20):
+    def generate_response(self, input_text, temperature=0.7, max_words=20):
         """Genera una respuesta usando primero GPT-4o y luego, en caso de fallo, el modelo local."""
         
         logger.info(f"Generando respuesta para el mensaje: {input_text}")
 
-        # Primero intentamos obtener la respuesta de GPT-4o
+        # Intentar obtener la respuesta de GPT-4o
         gpt_response = self.gpt4o_generate_response(input_text)
         
         # Si GPT-4o genera una respuesta válida, la usamos
         if gpt_response:
             logger.info(f"Respuesta de GPT-4o recibida: {gpt_response}")
-            # Almacenar para ajuste fino
+            # Almacenar para ajuste fino si la respuesta es correcta
             self.almacenar_para_ajuste_fino(input_text, gpt_response)
             return gpt_response
         
-        # Si no se obtuvo respuesta de GPT-4o, generamos con el modelo local
+        # Si no se obtuvo respuesta de GPT-4o, generar con el modelo local
         logger.warning("No se obtuvo respuesta de GPT-4o. Generando con el modelo local.")
-        
+
         # Verificar si el modelo local está entrenado antes de proceder
         if not self.is_trained or self.model is None:
             logger.error("El modelo local no está entrenado o no ha sido cargado. No se puede generar una respuesta coherente.")
-            return "El modelo local aún no está listo, por favor intenta más tarde."
+            return (
+                "El modelo local aún no está listo para generar una respuesta completa. "
+                "Estamos trabajando para mejorar esta función."
+            )
 
         # Verificar que el tokenizer esté inicializado
         if self.tokenizer is None:
             logger.error("El tokenizer no ha sido inicializado. No se puede procesar el mensaje.")
-            return "El modelo local no está listo para generar una respuesta."
+            return "El modelo local no está listo para procesar este mensaje."
 
         # Generar la respuesta con el modelo local
         logger.info("Generando respuesta local.")
         local_response = self.model_generate_response(input_text, temperature, max_words)
 
-        # Post-procesar la respuesta para eliminar '<OOV>'
+        # Post-procesar la respuesta para eliminar '<OOV>' y mejorar la coherencia
         final_response = self.post_process_response(local_response)
 
-        # Retornamos la respuesta post-procesada
+        # Verificar si la respuesta local es válida
+        if not final_response or len(final_response.split()) < 3:
+            logger.error("La respuesta generada localmente no fue coherente o fue demasiado corta.")
+            return "No he podido generar una respuesta adecuada. Por favor, intenta reformular tu pregunta."
+
+        logger.info(f"Respuesta local generada: {final_response}")
+
+        # Retornamos la respuesta local procesada
         return final_response
+
 
 
     def gpt4o_generate_response(self, input_text):
@@ -953,31 +1019,31 @@ class Conversar:
             'Authorization': f'Bearer {os.getenv("OPENAI_API_KEY")}'
         }
         data = {
-            'model': 'gpt-4o-mini',  # Asegúrate de que el modelo esté correctamente especificado
+            'model': 'gpt-4o-mini',
             'messages': [
                 {
                     "role": "system", 
                     "content": (
-                        "Eres un gran científico de numerología especializado en predicciones de loterías. "
-                        "Responde de manera precisa, utilizando un enfoque matemático y científico, "
-                        "siempre en español a menos que el usuario hable en otro idioma."
+                        "Eres un experto científico de numerología especializado en análisis de patrones numéricos y predicciones de loterías. "
+                        "Proporciona respuestas precisas basadas en reglas matemáticas, con un enfoque analítico y siempre en español, "
+                        "a menos que el usuario hable en otro idioma."
                     )
                 },
                 {"role": "user", "content": input_text}
             ],
-            'max_tokens': 150,
-            'temperature': 0.7  # Control de creatividad
+            'max_tokens': 120,  # Limitar la longitud de la respuesta
+            'temperature': 0.6  # Reducir la creatividad para mantener respuestas coherentes y precisas
         }
-        
+
         response = requests.post(api_url, headers=headers, json=data)
         
         if response.status_code == 200:
             response_data = response.json()
             return response_data['choices'][0]['message']['content']
         else:
-            error_message = f"Failed to generate response from OpenAI: {response.status_code}, {response.text}"
-            logger.error(error_message)
-            return None  # o manejar de otra manera, según la lógica de tu aplicación
+            logger.error(f"Error al generar la respuesta desde OpenAI: {response.status_code}, {response.text}")
+            return None
+
 
 
 
@@ -990,24 +1056,28 @@ class Conversar:
         # Podrías añadir más reglas de comparación
         return False
 
-    def almacenar_para_ajuste_fino(self, input_text, gpt_response):
-        """Almacena las entradas y la respuesta de GPT-4o para realizar un ajuste fino del modelo."""
+    def almacenar_para_ajuste_fino(self, input_text, output_text):
+        """Almacena las entradas y las salidas de GPT-4 para realizar un ajuste fino."""
         try:
-            data = {"input": input_text, "response": gpt_response}
+            # Validar que la respuesta sea coherente antes de almacenarla
+            if len(output_text.split()) < 3:  # Solo almacenamos si la respuesta tiene más de 3 palabras
+                logging.warning(f"Respuesta demasiado corta, no se almacenará para ajuste fino: {output_text}")
+                return
+            
+            data = {"input": input_text, "response": output_text}
             with open('ajuste_fino_datos.pkl', 'ab') as f:
                 pickle.dump(data, f)
-            logger.info("Datos almacenados para ajuste fino.")
+            logging.info("Datos almacenados para ajuste fino.")
         except Exception as e:
-            logger.error(f"Error al almacenar datos para ajuste fino: {e}")
-
-
+            logging.error(f"Error al almacenar datos para ajuste fino: {e}")
 
     def realizar_ajuste_fino(self):
         """Realiza un ajuste fino en el modelo local utilizando los datos almacenados."""
-        logger.info("Realizando ajuste fino con las respuestas generadas por GPT-4.")
-        
+        logger.info("Iniciando el ajuste fino con los datos generados por GPT-4.")
+
         datos_para_ajuste = []
-        # Cargar todos los archivos de ajuste fino si hay varios
+        
+        # Cargar los archivos que contienen los datos de ajuste fino
         for file in os.listdir('.'):
             if file.startswith('ajuste_fino_datos') and file.endswith('.pkl'):
                 with open(file, 'rb') as f:
@@ -1017,28 +1087,33 @@ class Conversar:
                         except EOFError:
                             break
 
-        # Solo proceder si tenemos suficientes datos para el ajuste fino
+        # Solo proceder si tenemos suficientes datos válidos
         if len(datos_para_ajuste) < 10:
             logger.info("No hay suficientes datos para realizar un ajuste fino.")
             return
         
-        # Extraer los inputs y las respuestas de GPT-4
-        inputs = [data["input"] for data in datos_para_ajuste]
-        respuestas = [data["response"] for data in datos_para_ajuste]
+        # Extraer los inputs y las respuestas generadas por GPT-4
+        inputs = [data["input"] for data in datos_para_ajuste if len(data["response"].split()) >= 3]
+        respuestas = [data["response"] for data in datos_para_ajuste if len(data["response"].split()) >= 3]
+
+        if not inputs or not respuestas:
+            logger.error("No se encontraron suficientes entradas o respuestas válidas para el ajuste fino.")
+            return
 
         # Tokenizar las entradas y generar secuencias
         sequences = self.tokenizer.texts_to_sequences(inputs)
         X = pad_sequences(sequences, maxlen=self.max_sequence_length)
 
-        # Tokenizar las respuestas de GPT-4 como "objetivos"
+        # Tokenizar las respuestas de GPT-4
         response_sequences = self.tokenizer.texts_to_sequences(respuestas)
         y = pad_sequences(response_sequences, maxlen=self.max_sequence_length)
 
         # Realizar el ajuste fino del modelo local
-        logger.info(f"Entrenando el modelo local con {len(X)} ejemplos nuevos.")
+        logger.info(f"Entrenando el modelo local con {len(X)} ejemplos nuevos para ajuste fino.")
         self.model.fit(X, y, epochs=2, batch_size=32)
 
-        logger.info("Ajuste fino completado con éxito.")
+        logger.info("Ajuste fino del modelo local completado con éxito.")
+
 
     def model_generate_response(self, input_text, temperature=1.0, max_words=20):
         """Genera una respuesta utilizando el modelo local."""
@@ -1321,25 +1396,60 @@ class Conversar:
         return respuestas  # O seleccionar la más común o adecuada
     
     def ajuste_fino(self, nuevos_datos, epochs=2):
-        """Realiza ajuste fino del modelo con nuevos datos."""
-        logging.info("Iniciando el ajuste fino del modelo con nuevos datos...")
+        """Realiza ajuste fino del modelo conversacional con nuevos datos."""
+        logging.info("Iniciando el ajuste fino del modelo conversacional con nuevos datos...")
 
-        # Procesar los nuevos datos
-        nuevos_datos_limpios = [self.clean_text(texto) for texto in nuevos_datos]
-        nuevas_secuencias = self.tokenizer.texts_to_sequences(nuevos_datos_limpios)
-        
-        # Generar secuencias y etiquetas para los nuevos datos
-        nuevas_X, nuevas_y = self.generate_sequences_and_labels(nuevas_secuencias)
+        try:
+            # Limpiar los nuevos datos
+            nuevos_datos_limpios = self.limpiar_datos(nuevos_datos)
 
-        if nuevas_X is None or len(nuevas_X) == 0:
-            logging.error("No se generaron nuevas secuencias para ajuste fino.")
-            return
+            # Generar secuencias y etiquetas
+            nuevas_X, nuevas_y = self.generar_secuencias_y_etiquetas(nuevos_datos_limpios)
 
-        # Realizar el ajuste fino con los nuevos datos
-        self.model.fit(nuevas_X, nuevas_y, epochs=epochs, batch_size=32)
-        logging.info("Ajuste fino completado con éxito.")
-        
+            # Validar que se hayan generado secuencias y etiquetas correctamente
+            if nuevas_X is None or len(nuevas_X) == 0:
+                logging.error("No se generaron nuevas secuencias para ajuste fino.")
+                return
+
+            if nuevas_y is None or len(nuevas_y) == 0:
+                logging.error("No se generaron nuevas etiquetas para ajuste fino.")
+                return
+
+            # Realizar el ajuste fino con los nuevos datos
+            self.model.fit(nuevas_X, nuevas_y, epochs=epochs, batch_size=32, verbose=1)
+            logging.info("Ajuste fino del modelo conversacional completado con éxito.")
+
+        except Exception as e:
+            logging.error(f"Error durante el ajuste fino del modelo conversacional: {e}")
+
         logging.info("Ajuste fino completado.")
+
+    def limpiar_datos(self, nuevos_datos):
+        """Limpia los datos nuevos aplicando la función clean_text."""
+        try:
+            datos_limpios = [self.clean_text(texto) for texto in nuevos_datos]
+            logging.info(f"Datos limpios generados: {len(datos_limpios)} ejemplos.")
+            return datos_limpios
+        except Exception as e:
+            logging.error(f"Error al limpiar los datos para ajuste fino: {e}")
+            return None
+
+    def generar_secuencias_y_etiquetas(self, nuevos_datos_limpios):
+        """Genera secuencias y etiquetas a partir de los datos nuevos limpios."""
+        try:
+            # Tokenizar los datos limpios
+            nuevas_secuencias = self.tokenizer.texts_to_sequences(nuevos_datos_limpios)
+            logging.info(f"Secuencias generadas: {len(nuevas_secuencias)} secuencias.")
+
+            # Generar las secuencias de entrada y las etiquetas a partir de las secuencias tokenizadas
+            nuevas_X, nuevas_y = self.generate_sequences_and_labels(nuevas_secuencias)
+            logging.info(f"Secuencias de entrada y etiquetas generadas para ajuste fino.")
+
+            return nuevas_X, nuevas_y
+        except Exception as e:
+            logging.error(f"Error al generar secuencias y etiquetas: {e}")
+            return None, None
+
 
     def mantener_contexto(self, input_text, contexto):
         """Mantiene el contexto de la conversación para generar respuestas más coherentes."""
