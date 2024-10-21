@@ -14,7 +14,7 @@ Here’s a breakdown of the key components included in this project:
 - **`model.py`** 🧠: Contains the neural network model used for processing data and recognizing patterns.
 - **`requirements.txt`** 📦: Lists all the dependencies required to run the project. (e.g., TensorFlow, Pandas)
 - **`scheduler.py`** ⏲️: Responsible for handling task scheduling and automation processes.
-- **`watched.py`** 👀: Tracks changes and events during the model's execution, ensuring smooth operations.
+- **`watcher.py`** 👀: Tracks changes and events during the model's execution, ensuring smooth operations.
 
 ## 🚀 **Getting Started**
 To run this project on your local machine, follow these steps:
