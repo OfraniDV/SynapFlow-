@@ -25,6 +25,9 @@ class Database:
         # Crear las tablas si no existen
         self.create_tables()
 
+        # Asegurar que el índice basado en MD5 está creado
+        self.ensure_correct_index_on_processed_messages()
+
     def get_conn(self):
         """Obtener una conexión del pool"""
         return self.connection_pool.getconn()
@@ -43,7 +46,7 @@ class Database:
         try:
             with conn.cursor() as cur:
                 cur.execute("""CREATE TABLE IF NOT EXISTS charadas (id SERIAL PRIMARY KEY, numero INTEGER NOT NULL, significado TEXT NOT NULL, UNIQUE(numero, significado));""")
-                cur.execute("""CREATE TABLE IF NOT EXISTS processed_messages (id SERIAL PRIMARY KEY, mensaje TEXT UNIQUE NOT NULL, processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);""")
+                cur.execute("""CREATE TABLE IF NOT EXISTS processed_messages (id SERIAL PRIMARY KEY, mensaje TEXT NOT NULL, processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);""")
                 cur.execute("""CREATE TABLE IF NOT EXISTS logsfirewallids (id SERIAL PRIMARY KEY, user_id BIGINT, nombre TEXT, alias TEXT, grupo BIGINT, nombregrupo TEXT, privado BOOLEAN, fechareciente TIMESTAMP DEFAULT CURRENT_TIMESTAMP, ultima_notificacion TIMESTAMP DEFAULT NULL, notificado BOOLEAN DEFAULT false, expulsado BOOLEAN DEFAULT false, biografia TEXT, chatgpt BOOLEAN DEFAULT false, mensaje TEXT);""")
                 cur.execute("""CREATE TABLE IF NOT EXISTS feedback (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, feedback_type TEXT NOT NULL, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP);""")
                 cur.execute("""CREATE TABLE IF NOT EXISTS group_converse (id SERIAL PRIMARY KEY, type TEXT, serial TEXT, group_id BIGINT UNIQUE NOT NULL, inserted_at TIMESTAMP DEFAULT NOW());""")
@@ -53,6 +56,36 @@ class Database:
             logging.error(f"Error al crear tablas en la base de datos: {e}")
         finally:
             self.put_conn(conn)
+
+    def ensure_correct_index_on_processed_messages(self):
+        """Asegura que la tabla processed_messages tenga el índice correcto basado en el hash MD5 del mensaje."""
+        conn = self.get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    DO $$ 
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 
+                            FROM pg_indexes 
+                            WHERE schemaname = 'public' 
+                            AND tablename = 'processed_messages' 
+                            AND indexname = 'processed_messages_mensaje_hash'
+                        ) THEN
+                            -- Crear el índice basado en MD5 del mensaje
+                            CREATE UNIQUE INDEX processed_messages_mensaje_hash 
+                            ON processed_messages (MD5(mensaje));
+                        END IF;
+                    END $$;
+                """)
+                conn.commit()
+                logging.info("Verificación y creación del índice hash para la tabla 'processed_messages' completada.")
+        except Exception as e:
+            logging.error(f"Error al asegurar el índice en la tabla processed_messages: {e}")
+            conn.rollback()  # Revertir en caso de error
+        finally:
+            self.put_conn(conn)
+
 
 
     def add_group(self, group_id, group_type, serial):

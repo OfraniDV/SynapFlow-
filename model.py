@@ -1385,7 +1385,7 @@ class Conversar:
         datos_para_ajuste = []
 
         try:
-            # Procesamiento de nuevos datos
+            # Usar nuevos datos si se proporcionan
             if nuevos_datos:
                 logger.info(f"📥 Se proporcionaron {len(nuevos_datos)} nuevos datos para el ajuste fino.")
                 # Limpiar los nuevos datos
@@ -1393,8 +1393,9 @@ class Conversar:
                 nuevos_datos_limpios = self.limpiar_datos(nuevos_datos)
                 datos_para_ajuste.extend(nuevos_datos_limpios)
                 logger.info(f"🧾 Datos limpiados: {nuevos_datos_limpios}")
-            else:
-                # Cargar datos almacenados previamente
+            
+            # Si no hay nuevos datos, usar los datos almacenados en el archivo `ajuste_fino_datos.pkl`
+            if not nuevos_datos or len(nuevos_datos) == 0:
                 logger.info("📂 No se proporcionaron nuevos datos, cargando datos almacenados para ajuste fino.")
                 for file in os.listdir('.'):
                     if file.startswith('ajuste_fino_datos') and file.endswith('.pkl'):
@@ -1415,38 +1416,28 @@ class Conversar:
                                     logger.error(f"❌ Error al deserializar datos del archivo {file}: {e}")
                                     break
 
-            # Verificar si hay suficientes datos para realizar el ajuste fino
+            # Verificación de que hay suficientes datos para el ajuste fino
             if not datos_para_ajuste:
                 logger.warning("⚠️ No hay suficientes datos para realizar un ajuste fino.")
                 return
             
-            # Tokenizar las entradas
-            logger.info("🔡 Tokenizando las entradas.")
-            inputs = [data["input"] for data in datos_para_ajuste if isinstance(data["input"], str)]
-            respuestas = [data["response"] for data in datos_para_ajuste if isinstance(data["response"], str)]
+            # Filtrar entradas y respuestas válidas
+            inputs = [data["input"] for data in datos_para_ajuste if isinstance(data.get("input"), str)]
+            respuestas = [data["response"] for data in datos_para_ajuste if isinstance(data.get("response"), str)]
 
-            # Verificación de entradas y respuestas
             if len(inputs) == 0 or len(respuestas) == 0:
                 logger.error("❌ No se encontraron entradas o respuestas válidas para tokenizar.")
                 return
 
-            logger.info(f"📝 Entradas tokenizadas: {inputs}")
-            logger.info(f"📋 Respuestas tokenizadas: {respuestas}")
-
             # Tokenización y padding de secuencias
-            logger.info("🧮 Generando secuencias a partir de las entradas tokenizadas.")
+            logger.info("🔡 Tokenizando las entradas y respuestas.")
             sequences = self.tokenizer.texts_to_sequences(inputs)
             X = pad_sequences(sequences, maxlen=self.max_sequence_length)
-            logger.info(f"🔢 Secuencias de entrada generadas: {X}")
-
-            logger.info("🧮 Generando secuencias a partir de las respuestas tokenizadas.")
             response_sequences = self.tokenizer.texts_to_sequences(respuestas)
             y = pad_sequences(response_sequences, maxlen=self.max_sequence_length)
-            logger.info(f"🔢 Secuencias de respuestas generadas: {y}")
 
-            # Verificación de secuencias generadas
             if len(X) == 0 or len(y) == 0:
-                logger.error("❌ No se generaron secuencias o etiquetas válidas para entrenamiento.")
+                logger.error("❌ No se generaron secuencias o etiquetas válidas para el ajuste fino.")
                 return
 
             # Ajuste fino del modelo
@@ -1456,6 +1447,7 @@ class Conversar:
 
         except Exception as e:
             logger.error(f"❌ Error durante el ajuste fino del modelo Conversar: {e}")
+
 
 
     def model_generate_response(self, input_text, temperature=1.0, max_words=20):
