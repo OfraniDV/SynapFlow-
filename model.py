@@ -116,17 +116,20 @@ class NumerologyModel:
     def load(self, model_file):
         """Carga el modelo preentrenado desde el archivo y aplica ajustes finos si existen."""
         try:
+            logging.info("[NumerologyModel] Cargando el modelo de numerología...")
+
             # Cargar el modelo
             self.model = tf.keras.models.load_model(model_file)
+            logging.info("[NumerologyModel] Modelo de numerología cargado exitosamente.")
 
             # Cargar el MultiLabelBinarizer
             mlb_path = 'mlb_numerologia.pkl'
             if os.path.exists(mlb_path):
                 with open(mlb_path, 'rb') as mlb_file:
                     self.mlb = pickle.load(mlb_file)
-                logging.info("MultiLabelBinarizer cargado exitosamente.")
+                logging.info("[NumerologyModel] MultiLabelBinarizer cargado exitosamente.")
             else:
-                logging.error(f"Archivo {mlb_path} no encontrado.")
+                logging.error(f"[NumerologyModel] Archivo {mlb_path} no encontrado.")
                 self.is_trained = False
                 return
 
@@ -135,33 +138,32 @@ class NumerologyModel:
             if os.path.exists(seq_length_path):
                 with open(seq_length_path, 'rb') as seq_file:
                     self.max_sequence_length = pickle.load(seq_file)
-                logging.info("Longitud máxima de secuencias cargada exitosamente.")
+                logging.info("[NumerologyModel] Longitud máxima de secuencias cargada exitosamente.")
             else:
-                logging.error(f"Archivo {seq_length_path} no encontrado.")
+                logging.error(f"[NumerologyModel] Archivo {seq_length_path} no encontrado.")
                 self.is_trained = False
                 return
 
             # Extraer reglas de las fórmulas inmediatamente después de cargar el modelo
             formulas = self.db.get_all_formulas()
             if formulas:
-                logging.info("Extrayendo reglas de las fórmulas después de cargar el modelo...")
+                logging.info("[NumerologyModel] Extrayendo reglas de las fórmulas después de cargar el modelo...")
                 self.extract_rules_from_formulas(formulas)
             else:
-                logging.error("No se encontraron fórmulas al cargar el modelo.")
+                logging.error("[NumerologyModel] No se encontraron fórmulas al cargar el modelo.")
                 return
 
             # Marcar el modelo como cargado
             self.is_trained = True
-            logging.info("Modelo de numerología cargado exitosamente.")
+            logging.info("[NumerologyModel] Modelo de numerología cargado y listo para su uso.")
 
             # Aplicar ajustes finos si existen suficientes datos
-            logging.info("Aplicando ajustes finos guardados.")
+            logging.info("[NumerologyModel] Aplicando ajustes finos guardados.")
             self.aplicar_ajustes_finos()
 
         except Exception as e:
-            logging.error(f"Error al cargar el modelo de numerología: {e}")
+            logging.error(f"[NumerologyModel] Error al cargar el modelo de numerología: {e}")
             self.is_trained = False
-
 
     def aplicar_ajustes_finos(self):
         """Aplica los ajustes finos guardados al modelo basado en las fórmulas extraídas."""
