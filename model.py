@@ -1624,9 +1624,12 @@ class Conversar:
             messages = []
             for message_text in all_messages:
                 cleaned_message = self.clean_text(message_text)
-                if cleaned_message in self.processed_messages:
-                    logging.debug(f"Mensaje duplicado encontrado y omitido: {cleaned_message}")
-                    continue  # Ignorar mensajes duplicados
+
+                # Verificar si el mensaje ya fue procesado
+                if self.db.is_message_processed(cleaned_message):
+                    logging.debug(f"Mensaje ya procesado, omitiendo: {cleaned_message}")
+                    continue  # Ignorar mensajes ya procesados
+                
                 self.processed_messages.add(cleaned_message)
                 messages.append(cleaned_message)
 
@@ -1657,6 +1660,7 @@ class Conversar:
         except Exception as e:
             logging.error(f"Error durante la preparación de los datos: {e}")
             return None
+
 
     def clean_text(self, text):
         """Elimina emojis, caracteres especiales, convierte a minúsculas, y normaliza espacios."""

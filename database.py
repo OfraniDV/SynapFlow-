@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timedelta
 import logging
 from dotenv import load_dotenv
+import hashlib
 
 
 load_dotenv()
@@ -187,32 +188,51 @@ class Database:
         finally:
             self.put_conn(conn)  # Devolver la conexión al pool
 
-
     def get_new_messages(self):
         """Obtiene los mensajes de los últimos 90 minutos que no se hayan procesado antes."""
         conn = self.get_conn()  # Obtener conexión del pool
+        new_messages = []  # Inicializar lista para mensajes nuevos
         try:
-            time_threshold = datetime.now() - timedelta(minutes=90)
+            time_threshold = datetime.now() - timedelta(minutes=90)  # Calcular el umbral de tiempo
+
             with conn.cursor() as cur:
+                # Optimizar la consulta para excluir mensajes ya procesados
                 cur.execute("""
-                    SELECT mensaje FROM logsfirewallids
+                    SELECT mensaje 
+                    FROM logsfirewallids
                     WHERE mensaje IS NOT NULL 
                     AND mensaje != ''
                     AND fechareciente >= %s
+                    AND NOT EXISTS (
+                        SELECT 1 FROM processed_messages 
+                        WHERE md5(mensaje) = md5(logsfirewallids.mensaje)
+                    )
                     ORDER BY fechareciente ASC
                 """, (time_threshold,))
+                
                 result = cur.fetchall()
-                new_messages = []
+                logging.info(f"Se encontraron {len(result)} mensajes nuevos en la base de datos.")
+
+                # Procesar los resultados
                 for row in result:
                     message = row[0].strip()
-                    if message and isinstance(message, str) and not self.is_message_processed(message):
+                    if message and isinstance(message, str):
                         new_messages.append(message)
-                        self.save_processed_message(message)
-                return new_messages
-        except Exception as e:
-            logging.error(f"Error al obtener los nuevos mensajes: {e}")
-            conn.rollback()  # Revertir la transacción en caso de error
+                        self.save_processed_message(message)  # Guardar el mensaje como procesado
+
+                logging.info(f"Se procesaron {len(new_messages)} mensajes nuevos correctamente.")
+
+            return new_messages
+
+        except psycopg2.DatabaseError as db_error:
+            logging.error(f"Error en la base de datos al obtener los nuevos mensajes: {db_error}")
+            conn.rollback()  # Revertir la transacción en caso de error de base de datos
             return []
+        
+        except Exception as e:
+            logging.error(f"Error general al obtener los nuevos mensajes: {e}")
+            return []
+        
         finally:
             self.put_conn(conn)  # Devolver la conexión al pool
 
@@ -221,8 +241,10 @@ class Database:
         """Verifica si el mensaje ya fue procesado"""
         conn = self.get_conn()  # Obtener conexión del pool
         try:
+            # Generar hash MD5 del mensaje
+            message_hash = hashlib.md5(message.encode('utf-8')).hexdigest()
             with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) FROM processed_messages WHERE mensaje = %s", (message,))
+                cur.execute("SELECT COUNT(*) FROM processed_messages WHERE mensaje = %s", (message_hash,))
                 result = cur.fetchone()
                 return result[0] > 0
         except Exception as e:
@@ -233,16 +255,19 @@ class Database:
             self.put_conn(conn)  # Devolver la conexión al pool
 
 
+
     def save_processed_message(self, message):
         """Guarda un mensaje como procesado en la base de datos"""
         conn = self.get_conn()  # Obtener conexión del pool
         try:
+            # Generar hash MD5 del mensaje para almacenar un identificador más pequeño
+            message_hash = hashlib.md5(message.encode('utf-8')).hexdigest()
             with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO processed_messages (mensaje) 
                     VALUES (%s) 
                     ON CONFLICT DO NOTHING
-                """, (message,))
+                """, (message_hash,))
                 conn.commit()  # Confirmar la transacción
         except Exception as e:
             logging.error(f"Error al guardar el mensaje procesado: {e}")
