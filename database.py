@@ -56,18 +56,21 @@ class Database:
 
     def add_group(self, group_id, group_type, serial):
         """Añade un nuevo grupo a la tabla group_converse si no existe"""
+        conn = self.get_conn()  # Obtener conexión del pool
         try:
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO group_converse (group_id, type, serial)
                     VALUES (%s, %s, %s)
                     ON CONFLICT (group_id) DO NOTHING
                 """, (group_id, group_type, serial))
-                self.conn.commit()
+                conn.commit()
                 logging.info(f"Grupo {group_id} añadido exitosamente a la base de datos.")
         except Exception as e:
             logging.error(f"Error al añadir el grupo {group_id}: {e}")
-
+            conn.rollback()
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
 
     def is_group_registered(self, group_id):
         conn = self.get_conn()  # Obtener conexión del pool
@@ -90,107 +93,169 @@ class Database:
     def delete_group(self, group_id):
         """
         Elimina un grupo de la tabla group_converse basado en el group_id.
-        
-        Args:
-            group_id (int): El ID del grupo que deseas eliminar.
         """
-        with self.conn.cursor() as cur:
-            cur.execute("""
-                DELETE FROM group_converse WHERE group_id = %s
-            """, (group_id,))
-            self.conn.commit()
-            logging.info(f"Grupo con group_id {group_id} eliminado exitosamente.")
+        conn = self.get_conn()  # Obtener conexión del pool
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    DELETE FROM group_converse WHERE group_id = %s
+                """, (group_id,))
+                conn.commit()
+                logging.info(f"Grupo con group_id {group_id} eliminado exitosamente.")
+        except Exception as e:
+            logging.error(f"Error al eliminar el grupo {group_id}: {e}")
+            conn.rollback()
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
     def get_groups(self):
+        conn = self.get_conn()  # Obtener conexión del pool
         try:
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 cur.execute("SELECT group_id, type FROM group_converse")
                 return cur.fetchall()
         except Exception as e:
             logging.error(f"Error al obtener los grupos: {e}")
             return []
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
     def get_owner_info(self, owner_id):
         """Obtiene la información más reciente del propietario desde logsfirewallids"""
-        with self.conn.cursor() as cur:
-            cur.execute("""
-                SELECT nombre, alias FROM logsfirewallids
-                WHERE user_id = %s
-                ORDER BY fechareciente DESC LIMIT 1
-            """, (owner_id,))
-            result = cur.fetchone()
-            if result:
-                return {"nombre": result[0], "alias": result[1]}
+        conn = self.get_conn()  # Obtener conexión del pool
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT nombre, alias FROM logsfirewallids
+                    WHERE user_id = %s
+                    ORDER BY fechareciente DESC LIMIT 1
+                """, (owner_id,))
+                result = cur.fetchone()
+                if result:
+                    return {"nombre": result[0], "alias": result[1]}
+                return None
+        except Exception as e:
+            logging.error(f"Error al obtener la información del propietario: {e}")
             return None
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
 
     def get_all_formulas(self):
-        with self.conn.cursor() as cur:
-            cur.execute("""
-            SELECT mensaje FROM logsfirewallids
-            WHERE mensaje IS NOT NULL AND mensaje != ''
-            """)
-            result = cur.fetchall()
-            return [row[0] for row in result if row[0]]
+        conn = self.get_conn()  # Obtener conexión del pool
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                SELECT mensaje FROM logsfirewallids
+                WHERE mensaje IS NOT NULL AND mensaje != ''
+                """)
+                result = cur.fetchall()
+                return [row[0] for row in result if row[0]]
+        except Exception as e:
+            logging.error(f"Error al obtener las fórmulas: {e}")
+            conn.rollback()  # Revertir la transacción en caso de error
+            return []
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
     
     def get_all_interactions(self):
-        with self.conn.cursor() as cur:
-            cur.execute("""
-            SELECT mensaje FROM logsfirewallids
-            WHERE mensaje IS NOT NULL AND mensaje != ''
-            """)
-            result = cur.fetchall()
-            interactions = []
-            for row in result:
-                if row[0]:
-                    try:
-                        user_input, recommendations = row[0].split(", Recommendations: ")
-                        interactions.append((user_input.strip(), recommendations.split(',')))
-                    except ValueError as e:
-                        continue
-            return interactions
+        conn = self.get_conn()  # Obtener conexión del pool
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                SELECT mensaje FROM logsfirewallids
+                WHERE mensaje IS NOT NULL AND mensaje != ''
+                """)
+                result = cur.fetchall()
+                interactions = []
+                for row in result:
+                    if row[0]:
+                        try:
+                            user_input, recommendations = row[0].split(", Recommendations: ")
+                            interactions.append((user_input.strip(), recommendations.split(',')))
+                        except ValueError as e:
+                            continue
+                return interactions
+        except Exception as e:
+            logging.error(f"Error al obtener las interacciones: {e}")
+            conn.rollback()  # Revertir la transacción en caso de error
+            return []
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
     def get_new_messages(self):
         """Obtiene los mensajes de los últimos 90 minutos que no se hayan procesado antes."""
-        with self.conn.cursor() as cur:
+        conn = self.get_conn()  # Obtener conexión del pool
+        try:
             time_threshold = datetime.now() - timedelta(minutes=90)
-            cur.execute("""
-                SELECT mensaje FROM logsfirewallids
-                WHERE mensaje IS NOT NULL 
-                AND mensaje != ''
-                AND fechareciente >= %s
-                ORDER BY fechareciente ASC
-            """, (time_threshold,))
-            result = cur.fetchall()
-            new_messages = []
-            for row in result:
-                message = row[0].strip()
-                if message and isinstance(message, str) and not self.is_message_processed(message):
-                    new_messages.append(message)
-                    self.save_processed_message(message)
-            return new_messages
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT mensaje FROM logsfirewallids
+                    WHERE mensaje IS NOT NULL 
+                    AND mensaje != ''
+                    AND fechareciente >= %s
+                    ORDER BY fechareciente ASC
+                """, (time_threshold,))
+                result = cur.fetchall()
+                new_messages = []
+                for row in result:
+                    message = row[0].strip()
+                    if message and isinstance(message, str) and not self.is_message_processed(message):
+                        new_messages.append(message)
+                        self.save_processed_message(message)
+                return new_messages
+        except Exception as e:
+            logging.error(f"Error al obtener los nuevos mensajes: {e}")
+            conn.rollback()  # Revertir la transacción en caso de error
+            return []
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
     def is_message_processed(self, message):
         """Verifica si el mensaje ya fue procesado"""
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM processed_messages WHERE mensaje = %s", (message,))
-            result = cur.fetchone()
-            return result[0] > 0
+        conn = self.get_conn()  # Obtener conexión del pool
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) FROM processed_messages WHERE mensaje = %s", (message,))
+                result = cur.fetchone()
+                return result[0] > 0
+        except Exception as e:
+            logging.error(f"Error al verificar si el mensaje fue procesado: {e}")
+            conn.rollback()  # Revertir la transacción en caso de error
+            return False
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
     def save_processed_message(self, message):
         """Guarda un mensaje como procesado en la base de datos"""
-        with self.conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO processed_messages (mensaje) 
-                VALUES (%s) 
-                ON CONFLICT DO NOTHING
-            """, (message,))
-            self.conn.commit()
+        conn = self.get_conn()  # Obtener conexión del pool
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO processed_messages (mensaje) 
+                    VALUES (%s) 
+                    ON CONFLICT DO NOTHING
+                """, (message,))
+                conn.commit()  # Confirmar la transacción
+        except Exception as e:
+            logging.error(f"Error al guardar el mensaje procesado: {e}")
+            conn.rollback()  # Revertir la transacción en caso de error
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
     
     def get_numerology_adjustments(self):
         """Obtiene los nuevos datos o interacciones para realizar el ajuste fino del modelo de numerología."""
+        conn = self.get_conn()  # Obtener conexión del pool
         try:
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 # Seleccionar los mensajes más recientes que contienen ajustes de numerología
                 cur.execute("""
                     SELECT mensaje FROM logsfirewallids
@@ -203,54 +268,73 @@ class Database:
                 return [row[0] for row in result if row[0]]
         except Exception as e:
             logging.error(f"Error al obtener los ajustes de numerología: {e}")
+            conn.rollback()  # Revertir la transacción en caso de error
             return []
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
     def verificar_grupo_activado(self, group_id):
         """Verifica si un grupo está activado en la tabla group_converse."""
+        conn = self.get_conn()  # Obtener conexión del pool
         try:
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 cur.execute("""
                     SELECT COUNT(*) FROM group_converse WHERE group_id = %s
                 """, (group_id,))
                 result = cur.fetchone()
                 return result[0] > 0  # Devuelve True si el grupo está registrado, False si no
         except Exception as e:
-            self.conn.rollback()  # Realiza un rollback en caso de error
             logging.error(f"Error verificando si el grupo está activado: {e}")
+            conn.rollback()  # Realiza un rollback en caso de error
             return False
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
 
     def save_feedback(self, user_id, feedback_type):
+        conn = self.get_conn()  # Obtener conexión del pool
         try:
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 cur.execute('''
                     INSERT INTO feedback (user_id, feedback_type)
                     VALUES (%s, %s)
                 ''', (user_id, feedback_type))
-                self.conn.commit()
+                conn.commit()  # Confirmar la transacción
                 logging.info(f"Retroalimentación guardada para el usuario {user_id}.")
         except Exception as e:
             logging.error(f"Error al guardar retroalimentación en la base de datos: {e}")
+            conn.rollback()  # Revertir la transacción en caso de error
             raise e
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
     def add_charada(self, numero, significado):
         """Añade o actualiza el significado de un número en la tabla charada."""
+        conn = self.get_conn()  # Obtener conexión del pool
         try:
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 cur.execute("""
                     INSERT INTO charada (numero, significado) 
                     VALUES (%s, %s) 
                     ON CONFLICT (numero) DO UPDATE SET significado = EXCLUDED.significado
                 """, (numero, significado))
-                self.conn.commit()
+                conn.commit()  # Confirmar la transacción
                 logging.info(f"Charada para el número {numero} añadida/actualizada exitosamente.")
         except Exception as e:
             logging.error(f"Error al guardar la charada: {e}")
+            conn.rollback()  # Revertir la transacción en caso de error
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
     def get_charada_by_numero(self, numero):
         """Obtiene el significado de un número específico en la tabla charada."""
+        conn = self.get_conn()  # Obtener conexión del pool
         try:
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 cur.execute("SELECT significado FROM charada WHERE numero = %s", (numero,))
                 result = cur.fetchone()
                 if result:
@@ -259,58 +343,92 @@ class Database:
                     return None
         except Exception as e:
             logging.error(f"Error al obtener charada para el número {numero}: {e}")
+            conn.rollback()  # Revertir la transacción en caso de error
             return None
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
     def get_charada_by_keyword(self, keyword):
         """Obtiene todos los números relacionados con una palabra clave en la tabla charada."""
+        conn = self.get_conn()  # Obtener conexión del pool
         try:
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 cur.execute("SELECT numero FROM charada WHERE significado ILIKE %s", (f"%{keyword}%",))
                 result = cur.fetchall()
                 return [row[0] for row in result]
         except Exception as e:
             logging.error(f"Error al obtener charadas por palabra clave '{keyword}': {e}")
+            conn.rollback()  # Revertir la transacción en caso de error
             return []
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
     def get_significado_por_numero(self, numero):
         """Obtiene los significados asociados a un número en la charada."""
-        with self.conn.cursor() as cur:
-            cur.execute("SELECT significado FROM charada WHERE numero = %s", (numero,))
-            resultado = cur.fetchone()
-            if resultado:
-                return resultado[0].split(',')  # Retorna los significados como una lista
+        conn = self.get_conn()  # Obtener conexión del pool
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT significado FROM charada WHERE numero = %s", (numero,))
+                resultado = cur.fetchone()
+                if resultado:
+                    return resultado[0].split(',')  # Retorna los significados como una lista
+                return None
+        except Exception as e:
+            logging.error(f"Error al obtener los significados para el número {numero}: {e}")
+            conn.rollback()  # Revertir la transacción en caso de error
             return None
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
     def buscar_numeros_por_significado(self, palabra_clave):
         """Busca todos los números en los que aparece una palabra en los significados."""
-        with self.conn.cursor() as cur:
-            cur.execute("""
-                SELECT numero, significado 
-                FROM charada 
-                WHERE significado ILIKE %s
-            """, (f"%{palabra_clave}%",))
-            resultados = cur.fetchall()
-            if resultados:
-                return [(numero, significado.split(',')) for numero, significado in resultados]
+        conn = self.get_conn()  # Obtener conexión del pool
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT numero, significado 
+                    FROM charada 
+                    WHERE significado ILIKE %s
+                """, (f"%{palabra_clave}%",))
+                resultados = cur.fetchall()
+                if resultados:
+                    return [(numero, significado.split(',')) for numero, significado in resultados]
+                return None
+        except Exception as e:
+            logging.error(f"Error al buscar números por significado con la palabra clave '{palabra_clave}': {e}")
+            conn.rollback()  # Revertir la transacción en caso de error
             return None
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
 
     def actualizar_charada(self, numero, significados_nuevos):
         """Actualiza o inserta significados en la charada para un número dado."""
-        with self.conn.cursor() as cur:
-            # Obtener los significados actuales
-            cur.execute("SELECT significado FROM charada WHERE numero = %s", (numero,))
-            result = cur.fetchone()
+        conn = self.get_conn()  # Obtener conexión del pool
+        try:
+            with conn.cursor() as cur:
+                # Obtener los significados actuales
+                cur.execute("SELECT significado FROM charada WHERE numero = %s", (numero,))
+                result = cur.fetchone()
 
-            if result:
-                # Actualizar el significado si ya existe
-                significados_existentes = result[0].split(',')
-                nuevos_significados = list(set(significados_existentes + significados_nuevos))
-                cur.execute("UPDATE charada SET significado = %s WHERE numero = %s", (','.join(nuevos_significados), numero))
-                logging.info(f"Actualizados significados para el número {numero}: {nuevos_significados}")
-            else:
-                # Insertar nuevo número y significado si no existe
-                cur.execute("INSERT INTO charada (numero, significado) VALUES (%s, %s)", (numero, ','.join(significados_nuevos)))
-                logging.info(f"Insertado número {numero} con significados: {significados_nuevos}")
-            
-            self.conn.commit()
+                if result:
+                    # Actualizar el significado si ya existe
+                    significados_existentes = result[0].split(',')
+                    nuevos_significados = list(set(significados_existentes + significados_nuevos))
+                    cur.execute("UPDATE charada SET significado = %s WHERE numero = %s", (','.join(nuevos_significados), numero))
+                    logging.info(f"Actualizados significados para el número {numero}: {nuevos_significados}")
+                else:
+                    # Insertar nuevo número y significado si no existe
+                    cur.execute("INSERT INTO charada (numero, significado) VALUES (%s, %s)", (numero, ','.join(significados_nuevos)))
+                    logging.info(f"Insertado número {numero} con significados: {significados_nuevos}")
+                
+                conn.commit()  # Confirmar la transacción
+        except Exception as e:
+            logging.error(f"Error al actualizar o insertar charada para el número {numero}: {e}")
+            conn.rollback()  # Revertir la transacción en caso de error
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
