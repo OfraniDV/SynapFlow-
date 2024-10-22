@@ -274,7 +274,7 @@ class NumerologyModel:
             logging.info("Modelo ajustado guardado como 'numerology_model_finetuned.keras'.")
 
         except Exception as e:
-            logging.error(f"Error durante el ajuste fino: {e}")
+            logging.error(f"Error durante el ajuste fino NumerologyModel: {e}")
 
     def generar_caracteristicas(self, X_data):
         """Genera las características para el ajuste fino."""
@@ -1355,7 +1355,7 @@ class Conversar:
             logger.info("Ajuste fino del modelo local completado con éxito.")
         
         except Exception as e:
-            logger.error(f"Error durante el ajuste fino: {e}")
+            logger.error(f"Error durante el ajuste fino Conversar Model: {e}")
 
     def model_generate_response(self, input_text, temperature=1.0, max_words=20):
         """Genera una respuesta utilizando el modelo local."""
