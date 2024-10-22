@@ -432,3 +432,22 @@ class Database:
             conn.rollback()  # Revertir la transacción en caso de error
         finally:
             self.put_conn(conn)  # Devolver la conexión al pool
+
+    def get_all_messages(self):
+        """Obtiene todos los mensajes de la tabla logsfirewallids."""
+        conn = self.get_conn()  # Obtener conexión del pool
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT mensaje FROM logsfirewallids
+                    WHERE mensaje IS NOT NULL 
+                    AND mensaje != ''
+                """)
+                result = cur.fetchall()
+                return [row[0] for row in result if row[0]]
+        except Exception as e:
+            logging.error(f"Error al obtener los mensajes de la tabla logsfirewallids: {e}")
+            return []
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+

@@ -17,6 +17,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, num
     """Función para manejar cualquier mensaje de texto y generar una respuesta solo si el grupo está autorizado"""
     logger = logging.getLogger(__name__)
 
+    # Verificar si el update contiene un mensaje válido
+    if update.message is None or update.message.text is None:
+        logger.warning("El update no contiene un mensaje de texto válido.")
+        return
+
     # Capturar el mensaje del usuario
     user_message = update.message.text
     chat_type = update.message.chat.type  # Verificar si es un chat privado o grupal

@@ -133,13 +133,16 @@ def load_commands(application, db, numerology_model, conversar_model):
 def register_message_handler(application, db, conversar_model, numerology_model):
     """Registra el MessageHandler para manejar mensajes de texto generales"""
     from commands.handle_message import handle_message
-    # Registramos el handler de mensajes
+    
+    # Registrar el handler de mensajes, sin pasar db y los modelos si ya están inicializados en handle_message.py
     message_handler = MessageHandler(
         filters.TEXT & ~filters.COMMAND, 
-        partial(handle_message, db=db, conversar_model=conversar_model, numerology_model=numerology_model)
+        handle_message  # Llamamos directamente a handle_message sin parámetros adicionales
     )
+    
     application.add_handler(message_handler)
     logger.info("MessageHandler registrado para mensajes generales.")
+
 
 
 def main():

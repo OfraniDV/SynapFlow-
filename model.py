@@ -24,6 +24,10 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.utils import to_categorical
+from difflib import SequenceMatcher
+
+
 from dotenv import load_dotenv
 
 # Cargar variables de entorno
@@ -961,12 +965,12 @@ class Conversar:
     def __init__(self, db):
         """
         Inicializa la clase Conversar con una conexión a la base de datos, un modelo no entrenado y un tokenizer.
-        
+
         Args:
             db (object): Conexión a la base de datos para cargar o guardar datos relacionados con el bot.
         """
-        if db is None:
-            raise ValueError("La conexión a la base de datos no está configurada correctamente.")
+        if db is None or not hasattr(db, 'get_all_messages'):
+            raise ValueError("La conexión a la base de datos no está configurada correctamente o es inválida.")
         
         self.db = db  # Conexión a la base de datos
         
@@ -986,33 +990,88 @@ class Conversar:
         # Conjunto para almacenar los mensajes únicos procesados
         self.processed_messages = set()
 
-        # Verificación inicial si deseas cargar un modelo preentrenado
-        self.model = self.cargar_modelo()  # Descomentar si quieres cargar un modelo al inicio
+        # Cargar el modelo y el tokenizer si están disponibles
+        self.cargar_modelo_y_tokenizer()
 
-    def cargar_modelo(self):
-        """Carga el modelo conversacional y el tokenizer"""
+        # Validar si el modelo y el tokenizer se cargaron correctamente
+        if self.model and self.tokenizer:
+            self.is_trained = True
+            logging.info("Modelo y tokenizer cargados exitosamente.")
+        else:
+            self.is_trained = False
+            logging.warning("Modelo o tokenizer no cargados. Entrenamiento será necesario.")
+    
+    def cargar_modelo_y_tokenizer(self):
+        """Carga el modelo conversacional y el tokenizer."""
         try:
-            # Cargar el modelo de la red neuronal guardado en archivo
-            self.model = tf.keras.models.load_model('conversational_model.keras')
+            start_time = time.time()
 
+            # Cargar el modelo desde un archivo
+            logging.info("Intentando cargar el modelo conversacional desde 'conversational_model.keras'...")
+            self.model = tf.keras.models.load_model('conversational_model.keras')
+            logging.info(f"Modelo conversacional cargado exitosamente en {time.time() - start_time:.2f} segundos.")
+            
             # Cargar el tokenizer desde un archivo
+            logging.info("Intentando cargar el tokenizer desde 'tokenizer.pkl'...")
             with open('tokenizer.pkl', 'rb') as f:
                 self.tokenizer = pickle.load(f)
+
+            # Verificar si el tokenizer fue cargado correctamente
+            if self.tokenizer:
+                logging.info("Tokenizer cargado exitosamente.")
+            else:
+                logging.warning("El tokenizer no se cargó correctamente.")
             
             # Indicar que el modelo ha sido cargado y está listo para usarse
             self.is_trained = True
-            logging.info("Modelo conversacional cargado exitosamente.")
+            logging.info("El modelo y el tokenizer están listos para usarse.")
+
         except Exception as e:
-            logging.error(f"Error al cargar el modelo conversacional: {e}")
+            # Registrar el error en los logs
+            logging.error(f"Error al cargar el modelo o el tokenizer: {e}")
+            self.is_trained = False
+
+    def cargar_modelo(self):
+        """Carga el modelo conversacional y el tokenizer."""
+        try:
+            start_time = time.time()
+            
+            # Intentar cargar el modelo de la red neuronal desde el archivo
+            logging.info("Intentando cargar el modelo conversacional desde 'conversational_model.keras'...")
+            self.model = tf.keras.models.load_model('conversational_model.keras')
+            logging.info(f"Modelo conversacional cargado exitosamente. Tiempo de carga: {time.time() - start_time:.2f} segundos.")
+            print(f"[INFO] Modelo conversacional cargado exitosamente en {time.time() - start_time:.2f} segundos.")
+
+            # Intentar cargar el tokenizer desde el archivo
+            logging.info("Intentando cargar el tokenizer desde 'tokenizer.pkl'...")
+            with open('tokenizer.pkl', 'rb') as f:
+                self.tokenizer = pickle.load(f)
+            
+            if self.tokenizer:
+                logging.info("Tokenizer cargado exitosamente.")
+                print("[INFO] Tokenizer cargado exitosamente.")
+            else:
+                logging.warning("El tokenizer no se cargó correctamente.")
+                print("[WARNING] El tokenizer no se cargó correctamente.")
+            
+            # Indicar que el modelo ha sido cargado y está listo para usarse
+            self.is_trained = True
+            logging.info("El modelo y el tokenizer están listos para usarse.")
+            print("[INFO] El modelo y el tokenizer están listos para usarse.")
+
+        except Exception as e:
+            # Registrar el error en los logs y mostrarlo en consola
+            logging.error(f"Error al cargar el modelo o el tokenizer: {e}")
+            print(f"[ERROR] Error al cargar el modelo o el tokenizer: {e}")
             self.is_trained = False
 
     def analyze_message(self, input_text):
         """
         Realiza un análisis previo del mensaje antes de generar una respuesta.
-        
+
         Args:
             input_text (str): El mensaje del usuario que será analizado.
-        
+
         Returns:
             str or None: Devuelve una respuesta si se detecta una condición especial,
                         o None si no se detectan condiciones especiales.
@@ -1022,48 +1081,65 @@ class Conversar:
         # Convertir el texto a minúsculas una vez para mejorar la eficiencia
         input_text_lower = input_text.lower()
 
-        # Análisis 1: Detectar si el mensaje contiene ciertas palabras clave relacionadas con ayuda
-        keywords = ['ayuda', 'soporte', 'problema', 'error']
-        if any(keyword in input_text_lower for keyword in keywords):
+        # Definir palabras clave para detectar condiciones especiales
+        help_keywords = ['ayuda', 'soporte', 'problema', 'error']
+        offensive_keywords = ['maldición', 'insulto', 'grosería']  # Puedes expandir esta lista según sea necesario
+
+        # Análisis 1: Detectar si el mensaje contiene palabras clave relacionadas con ayuda
+        if any(keyword in input_text_lower for keyword in help_keywords):
             logger.info("El mensaje contiene palabras clave relacionadas con ayuda.")
             return "Parece que necesitas ayuda. ¿En qué puedo asistirte?"
 
         # Análisis 2: Detectar si el mensaje es muy corto (menos de 3 palabras)
-        if len(input_text.split()) < 3:
-            logger.info("El mensaje es muy corto, ajustando la temperatura para una respuesta simple.")
-            return None  # Aquí podrías devolver una sugerencia de ajuste de temperatura si lo necesitas
+        word_count = len(input_text.split())
+        if word_count < 3:
+            logger.info(f"Mensaje demasiado corto (solo {word_count} palabras), generando respuesta simple.")
+            return None  # Puedes ajustar la respuesta aquí para simplificar aún más la interacción
 
         # Análisis 3: Detectar si el mensaje es muy largo (más de 50 palabras)
-        if len(input_text.split()) > 50:
-            logger.info("El mensaje es muy largo, solicitando un resumen.")
+        if word_count > 50:
+            logger.info(f"Mensaje demasiado largo ({word_count} palabras), solicitando un resumen.")
             return "Tu mensaje es un poco largo. ¿Podrías resumirlo para que pueda entender mejor?"
 
-        # (Opcional) Análisis 4: Detectar si el mensaje contiene lenguaje inapropiado
-        offensive_keywords = ['maldición', 'insulto', 'grosería']  # Aquí podrías añadir más palabras
+        # Análisis 4: Detectar lenguaje inapropiado (expandir según sea necesario)
         if any(offensive_word in input_text_lower for offensive_word in offensive_keywords):
             logger.warning("Se detectó lenguaje inapropiado en el mensaje.")
             return "Por favor, evita usar lenguaje inapropiado."
 
+        # (Opcional) Análisis 5: Otros análisis (añadir más reglas personalizadas según el caso)
+        # Ejemplo: Detectar preguntas o comandos específicos
+        if input_text_lower.startswith('comando'):
+            logger.info("Se detectó un comando especial.")
+            return "Has activado un comando especial. Procesando..."
+
         # Si no se detectan condiciones especiales, continuar con la generación de respuesta
+        logger.info("No se detectaron condiciones especiales en el mensaje.")
         return None
 
-
     def generate_response(self, input_text, temperature=0.7, max_words=20):
-        """Genera una respuesta usando primero GPT-4o y luego, en caso de fallo, el modelo local."""
+        """Genera una respuesta usando primero GPT-4 y luego, en caso de fallo, el modelo local."""
         
         logger.info(f"Generando respuesta para el mensaje: {input_text}")
 
-        # Intentar obtener la respuesta de GPT-4o
-        gpt_response = self.gpt4o_generate_response(input_text)
-        
-        # Si GPT-4o genera una respuesta válida, la usamos
+        # Intentar obtener la respuesta de GPT-4
+        try:
+            gpt_response = self.gpt4o_generate_response(input_text)
+        except Exception as e:
+            gpt_response = None
+            logger.error(f"Error al intentar generar respuesta desde GPT-4o: {e}")
+
+        # Si GPT-4 genera una respuesta válida, la usamos
         if gpt_response:
             logger.info(f"Respuesta de GPT-4o recibida: {gpt_response}")
-            # Almacenar para ajuste fino si la respuesta es correcta
-            self.almacenar_para_ajuste_fino(input_text, gpt_response)
+            # Almacenar para ajuste fino si la respuesta es válida y adecuada
+            if len(gpt_response.split()) > 3:  # Asegurarse de que la respuesta es suficientemente larga
+                self.almacenar_para_ajuste_fino(input_text, gpt_response)
+                logger.info("Respuesta almacenada para ajuste fino.")
+            else:
+                logger.warning("Respuesta de GPT-4o es demasiado corta. No se almacenará para ajuste fino.")
             return gpt_response
         
-        # Si no se obtuvo respuesta de GPT-4o, generar con el modelo local
+        # Si no se obtuvo respuesta de GPT-4, generar con el modelo local
         logger.warning("No se obtuvo respuesta de GPT-4o. Generando con el modelo local.")
 
         # Verificar si el modelo local está entrenado antes de proceder
@@ -1079,9 +1155,13 @@ class Conversar:
             logger.error("El tokenizer no ha sido inicializado. No se puede procesar el mensaje.")
             return "El modelo local no está listo para procesar este mensaje."
 
-        # Generar la respuesta con el modelo local
-        logger.info("Generando respuesta local.")
-        local_response = self.model_generate_response(input_text, temperature, max_words)
+        # Intentar generar la respuesta con el modelo local
+        try:
+            logger.info("Generando respuesta con el modelo local.")
+            local_response = self.model_generate_response(input_text, temperature, max_words)
+        except Exception as e:
+            logger.error(f"Error al generar respuesta con el modelo local: {e}")
+            return "Se ha producido un error al generar la respuesta local. Por favor, intenta más tarde."
 
         # Post-procesar la respuesta para eliminar '<OOV>' y mejorar la coherencia
         final_response = self.post_process_response(local_response)
@@ -1091,12 +1171,10 @@ class Conversar:
             logger.error("La respuesta generada localmente no fue coherente o fue demasiado corta.")
             return "No he podido generar una respuesta adecuada. Por favor, intenta reformular tu pregunta."
 
-        logger.info(f"Respuesta local generada: {final_response}")
+        logger.info(f"Respuesta local generada exitosamente: {final_response}")
 
         # Retornamos la respuesta local procesada
         return final_response
-
-
 
     def gpt4o_generate_response(self, input_text):
         api_url = 'https://api.openai.com/v1/chat/completions'  # URL actualizada para chat completions
@@ -1130,81 +1208,144 @@ class Conversar:
             logger.error(f"Error al generar la respuesta desde OpenAI: {response.status_code}, {response.text}")
             return None
 
-
-
-
     def comparar_respuestas(self, local_response, gpt_response):
-        """Compara la respuesta generada localmente con la de GPT-4."""
-        # Aquí puedes implementar cualquier métrica o lógica que prefieras para comparar ambas respuestas.
-        # Por ejemplo, si la respuesta local es muy corta o incoherente, consideras la de GPT-4 como mejor.
+        """Compara la respuesta generada localmente con la de GPT-4 para decidir cuál es mejor."""
+        
+        # 1. Verificar si alguna de las respuestas es demasiado corta o no tiene sentido
         if len(local_response.split()) < 3 or local_response == "<UNK>":
-            return True
-        # Podrías añadir más reglas de comparación
+            logger.info("La respuesta local es demasiado corta o incoherente. Se seleccionará la respuesta de GPT-4.")
+            return True  # GPT-4 es mejor en este caso
+
+        # 2. Comparar similitud de las respuestas (usando una métrica básica de similitud)
+        similarity = SequenceMatcher(None, local_response, gpt_response).ratio()
+        logger.info(f"Similitud entre la respuesta local y la de GPT-4: {similarity:.2f}")
+
+        # Si la similitud es muy alta (por ejemplo, más del 90%), se consideran casi iguales
+        if similarity > 0.9:
+            logger.info("Las respuestas local y GPT-4 son similares.")
+            return False  # No es necesario preferir una sobre la otra
+
+        # 3. Verificar si alguna de las respuestas es significativamente más larga (lo que podría significar más información)
+        if len(gpt_response.split()) > len(local_response.split()) + 5:
+            logger.info("La respuesta de GPT-4 es significativamente más larga, seleccionando GPT-4.")
+            return True  # GPT-4 es mejor si es mucho más detallada
+        
+        # 4. Comparar otras condiciones que puedas definir (puedes añadir reglas adicionales aquí)
+
+        # Si ninguna de las condiciones previas aplica, se considera que la respuesta local es suficiente
+        logger.info("Se seleccionará la respuesta local.")
         return False
 
     def almacenar_para_ajuste_fino(self, input_text, output_text):
         """Almacena las entradas y las salidas de GPT-4 para realizar un ajuste fino."""
         try:
-            # Validar que la respuesta sea coherente antes de almacenarla
-            if len(output_text.split()) < 3:  # Solo almacenamos si la respuesta tiene más de 3 palabras
+            # Validar que el texto de entrada y la respuesta no sean vacíos o incoherentes
+            if not input_text or not output_text:
+                logging.warning("El texto de entrada o la respuesta están vacíos. No se almacenarán.")
+                return
+
+            if len(output_text.split()) < 3:
                 logging.warning(f"Respuesta demasiado corta, no se almacenará para ajuste fino: {output_text}")
                 return
             
+            # Crear los datos que serán almacenados
             data = {"input": input_text, "response": output_text}
-            with open('ajuste_fino_datos.pkl', 'ab') as f:
+
+            # Verificar si el archivo ya existe y evitar duplicados si es necesario
+            ajuste_fino_file = 'ajuste_fino_datos.pkl'
+            if os.path.exists(ajuste_fino_file):
+                with open(ajuste_fino_file, 'rb') as f:
+                    try:
+                        # Verificar si el mismo par de datos ya existe
+                        while True:
+                            existing_data = pickle.load(f)
+                            if existing_data == data:
+                                logging.info("Datos duplicados encontrados. No se almacenarán nuevamente.")
+                                return
+                    except EOFError:
+                        pass  # Fin del archivo alcanzado, no se encontraron duplicados
+            
+            # Almacenar los datos
+            with open(ajuste_fino_file, 'ab') as f:
                 pickle.dump(data, f)
-            logging.info("Datos almacenados para ajuste fino.")
+            logging.info("Datos almacenados para ajuste fino correctamente.")
+
+            # Opcional: Verificar el tamaño del archivo tras cada escritura
+            file_size = os.path.getsize(ajuste_fino_file)
+            logging.info(f"El tamaño actual del archivo de ajuste fino es {file_size} bytes.")
+
         except Exception as e:
             logging.error(f"Error al almacenar datos para ajuste fino: {e}")
 
-    def realizar_ajuste_fino(self):
-        """Realiza un ajuste fino en el modelo local utilizando los datos almacenados."""
-        logger.info("Iniciando el ajuste fino con los datos generados por GPT-4.")
-
+    def realizar_ajuste_fino(self, nuevos_datos=None, epochs=2):
+        """
+        Realiza un ajuste fino en el modelo local utilizando datos proporcionados directamente
+        o los datos almacenados previamente.
+        
+        Args:
+            nuevos_datos (list, optional): Lista de nuevos datos para ajuste fino. Si no se proporcionan,
+                                        se usarán los datos almacenados en archivos.
+            epochs (int): Número de épocas para entrenar el modelo.
+        """
+        logger.info("Iniciando el ajuste fino del modelo conversacional.")
+        
         datos_para_ajuste = []
+
+        try:
+            if nuevos_datos:
+                # Si se proporcionan nuevos datos, limpiarlos y agregarlos directamente
+                logger.info("Usando nuevos datos para el ajuste fino.")
+                nuevos_datos_limpios = self.limpiar_datos(nuevos_datos)
+                datos_para_ajuste.extend(nuevos_datos_limpios)
+            else:
+                # Cargar los archivos que contienen los datos de ajuste fino si no se proporcionaron nuevos datos
+                logger.info("Cargando datos almacenados para el ajuste fino.")
+                for file in os.listdir('.'):
+                    if file.startswith('ajuste_fino_datos') and file.endswith('.pkl'):
+                        with open(file, 'rb') as f:
+                            while True:
+                                try:
+                                    datos_para_ajuste.append(pickle.load(f))
+                                except EOFError:
+                                    break
+                                except pickle.UnpicklingError as e:
+                                    logger.error(f"Error al deserializar datos del archivo {file}: {e}")
+                                    break
+
+            if not datos_para_ajuste:
+                logger.warning("No hay suficientes datos para realizar un ajuste fino.")
+                return
+            
+            # Tokenizar las entradas y generar secuencias
+            inputs = [data["input"] for data in datos_para_ajuste]
+            respuestas = [data["response"] for data in datos_para_ajuste]
+
+            sequences = self.tokenizer.texts_to_sequences(inputs)
+            X = pad_sequences(sequences, maxlen=self.max_sequence_length)
+
+            response_sequences = self.tokenizer.texts_to_sequences(respuestas)
+            y = pad_sequences(response_sequences, maxlen=self.max_sequence_length)
+
+            if len(X) == 0 or len(y) == 0:
+                logger.error("No se generaron secuencias o etiquetas válidas.")
+                return
+
+            logger.info(f"Entrenando el modelo local con {len(X)} ejemplos nuevos para ajuste fino.")
+            self.model.fit(X, y, epochs=epochs, batch_size=32)
+            logger.info("Ajuste fino del modelo local completado con éxito.")
         
-        # Cargar los archivos que contienen los datos de ajuste fino
-        for file in os.listdir('.'):
-            if file.startswith('ajuste_fino_datos') and file.endswith('.pkl'):
-                with open(file, 'rb') as f:
-                    while True:
-                        try:
-                            datos_para_ajuste.append(pickle.load(f))
-                        except EOFError:
-                            break
-
-        # Solo proceder si tenemos suficientes datos válidos
-        if len(datos_para_ajuste) < 10:
-            logger.info("No hay suficientes datos para realizar un ajuste fino.")
-            return
-        
-        # Extraer los inputs y las respuestas generadas por GPT-4
-        inputs = [data["input"] for data in datos_para_ajuste if len(data["response"].split()) >= 3]
-        respuestas = [data["response"] for data in datos_para_ajuste if len(data["response"].split()) >= 3]
-
-        if not inputs or not respuestas:
-            logger.error("No se encontraron suficientes entradas o respuestas válidas para el ajuste fino.")
-            return
-
-        # Tokenizar las entradas y generar secuencias
-        sequences = self.tokenizer.texts_to_sequences(inputs)
-        X = pad_sequences(sequences, maxlen=self.max_sequence_length)
-
-        # Tokenizar las respuestas de GPT-4
-        response_sequences = self.tokenizer.texts_to_sequences(respuestas)
-        y = pad_sequences(response_sequences, maxlen=self.max_sequence_length)
-
-        # Realizar el ajuste fino del modelo local
-        logger.info(f"Entrenando el modelo local con {len(X)} ejemplos nuevos para ajuste fino.")
-        self.model.fit(X, y, epochs=2, batch_size=32)
-
-        logger.info("Ajuste fino del modelo local completado con éxito.")
-
+        except Exception as e:
+            logger.error(f"Error durante el ajuste fino: {e}")
 
     def model_generate_response(self, input_text, temperature=1.0, max_words=20):
         """Genera una respuesta utilizando el modelo local."""
         
         logger.info(f"Generando respuesta local para el mensaje: {input_text}")
+
+        # Verificar si el tokenizer está correctamente inicializado
+        if self.tokenizer is None:
+            logger.error("El tokenizer no está inicializado.")
+            return "El modelo no está listo para procesar este mensaje."
 
         # Preprocesar el texto de entrada para convertirlo a secuencias de índices
         input_sequence = self.tokenizer.texts_to_sequences([input_text])
@@ -1221,7 +1362,12 @@ class Conversar:
         # Comenzar a generar una secuencia de palabras para la respuesta
         for _ in range(max_words):
             # Realizar la predicción del siguiente token/palabra
-            predicted_probs = self.model.predict(input_sequence)
+            try:
+                predicted_probs = self.model.predict(input_sequence)
+            except Exception as e:
+                logger.error(f"Error durante la predicción del modelo: {e}")
+                return "Lo siento, ha ocurrido un error al generar la respuesta."
+
             logger.debug(f"Probabilidades predichas para la próxima palabra: {predicted_probs}")
 
             # Aplicar control de temperatura para ajustar la aleatoriedad en la generación de palabras
@@ -1253,11 +1399,10 @@ class Conversar:
 
         # Si la respuesta es muy corta o carece de coherencia, proporcionar una respuesta por defecto
         if len(response.split()) < 3:
+            logger.warning("La respuesta generada es demasiado corta o carece de coherencia.")
             return "Lo siento, no estoy seguro de cómo responder a eso. ¿Podrías reformular tu pregunta?"
 
         return response
-
-
     
     def post_process_response(self, response):
         """
@@ -1266,25 +1411,23 @@ class Conversar:
         """
         logger = logging.getLogger(__name__)
 
-        # Eliminar etiquetas <OOV>
+        # Eliminar etiquetas <OOV> y limpiar espacios resultantes
         response = response.replace('<OOV>', '').strip()
+        response = re.sub(r'\s+', ' ', response)  # Eliminar espacios adicionales
 
-        # Eliminar espacios extra resultantes de la eliminación
-        response = re.sub(r'\s+', ' ', response)
-
-        # Eliminar posibles repeticiones de palabras y frases
+        # Eliminar repeticiones de palabras consecutivas
         words = response.split()
         filtered_words = []
         for i, word in enumerate(words):
-            if i > 0 and word == words[i-1]:
-                continue  # Omitir si es una repetición exacta de la palabra anterior
+            if i > 0 and word.lower() == words[i-1].lower():  # Ignorar repeticiones consecutivas (case-insensitive)
+                continue
             filtered_words.append(word)
 
         # Reconstruir la respuesta filtrada
         response = ' '.join(filtered_words)
 
-        # Corregir la gramática y estructura con spaCy (si está implementado)
-        if nlp:
+        # Corregir la gramática y estructura con spaCy (si está disponible)
+        if 'nlp' in globals() and nlp:  # Verificación más robusta para spaCy
             doc = nlp(response)
             response = ' '.join([token.text for token in doc])
 
@@ -1293,161 +1436,244 @@ class Conversar:
             filtered_sentences = []
             for i, sent in enumerate(sentences):
                 if i > 0 and str(sentences[i-1]).strip() == str(sent).strip():
-                    continue  # Omitir si la oración es una repetición exacta de la anterior
+                    continue  # Omitir oraciones redundantes
                 filtered_sentences.append(str(sent))
             response = ' '.join(filtered_sentences)
 
-        # Corregir posibles errores de puntuación o gramática básica
-        response = re.sub(r'\s+', ' ', response)  # Unificar espacios múltiples en uno solo
-        response = re.sub(r'\.\.+', '.', response)  # Reemplazar múltiples puntos por un solo punto
-        response = re.sub(r'\s,', ',', response)    # Corregir espacios antes de las comas
-        response = re.sub(r'\s\.', '.', response)   # Corregir espacios antes de los puntos
+        # Corregir posibles errores de puntuación y gramática básica
+        response = re.sub(r'\s+', ' ', response)  # Unificar múltiples espacios
+        response = re.sub(r'\.\.+', '.', response)  # Limitar múltiples puntos a un solo punto
+        response = re.sub(r'\s,', ',', response)    # Corregir espacio antes de las comas
+        response = re.sub(r'\s\.', '.', response)   # Corregir espacio antes de los puntos
+        response = re.sub(r' ,', ',', response)     # Corregir coma con espacio previo incorrecto
+        response = re.sub(r'\?+', '?', response)    # Limitar múltiples signos de interrogación a uno
 
         logger.info(f"Respuesta post-procesada: {response}")
         return response
 
-
-
-    def build_model(self):
-        """Construir e inicializar el modelo secuencial"""
+    def build_model(self, output_activation='sigmoid', learning_rate=0.0001):
+        """
+        Construir e inicializar el modelo secuencial.
+        
+        Args:
+            output_activation (str): Tipo de activación para la capa de salida ('sigmoid' o 'softmax').
+            learning_rate (float): Tasa de aprendizaje para el optimizador Adam.
+        """
         logging.info("Inicializando el modelo...")
 
         try:
+            # Verificar que los parámetros clave están inicializados correctamente
+            if not self.num_words or not self.max_sequence_length:
+                raise ValueError("Los parámetros 'num_words' o 'max_sequence_length' no están definidos correctamente.")
+            
             self.model = Sequential()
             
             # Capa Embedding
+            logging.info(f"Agregando capa de Embedding con input_dim={self.num_words}, output_dim=128, input_length={self.max_sequence_length}")
             self.model.add(Embedding(input_dim=self.num_words, output_dim=128, input_length=self.max_sequence_length))
             
-            # Capa LSTM Bidireccional con Dropout
+            # Capas LSTM Bidireccional con Dropout
+            logging.info("Agregando capas LSTM Bidireccional con Dropout.")
             self.model.add(Bidirectional(LSTM(128, return_sequences=True)))
             self.model.add(Dropout(0.3))
             self.model.add(Bidirectional(LSTM(128)))
             self.model.add(Dropout(0.3))
             
-            # Capa densa
+            # Capa densa intermedia
+            logging.info("Agregando capa densa intermedia con 128 unidades y activación ReLU.")
             self.model.add(Dense(128, activation='relu'))
             
-            # Capa de salida con sigmoid para multilabel
-            self.model.add(Dense(self.num_words, activation='sigmoid'))  # Cambiar a softmax si es necesario
+            # Capa de salida
+            logging.info(f"Agregando capa de salida con activación {output_activation}.")
+            if output_activation == 'softmax':
+                self.model.add(Dense(self.num_words, activation='softmax'))
+            else:
+                self.model.add(Dense(self.num_words, activation='sigmoid'))  # Mantiene sigmoid como predeterminado
             
             # Compilar el modelo
-            optimizer = Adam(learning_rate=0.0001)
+            optimizer = Adam(learning_rate=learning_rate)
+            logging.info(f"Compilando el modelo con Adam optimizer (learning_rate={learning_rate}) y sparse_categorical_crossentropy.")
             self.model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
             
             logging.info("Modelo inicializado y compilado correctamente.")
+        except ValueError as ve:
+            logging.error(f"Error de valor en los parámetros del modelo: {ve}")
+            raise ve
         except Exception as e:
-            logging.error(f"Error al construir el modelo: {e}")
+            logging.error(f"Error inesperado al construir el modelo: {e}")
             raise e
-
 
     def prepare_data(self):
         """Prepara los datos para el modelo de conversación"""
-        logging.info("Preparando datos para el modelo de conversación...")
+        logging.info("Iniciando la preparación de datos para el modelo de conversación...")
 
-        # Obtener todos los mensajes de la base de datos
-        all_messages = self.db.get_all_messages()
-        if not all_messages:
-            logging.error("No se encontraron mensajes en la base de datos.")
-            return None  # Asegúrate de que se retorna None si no hay mensajes
+        try:
+            # Obtener todos los mensajes de la base de datos
+            all_messages = self.db.get_all_messages()
+            if not all_messages or len(all_messages) == 0:
+                logging.error("No se encontraron mensajes en la base de datos.")
+                return None
 
-        # Limpiar y procesar los mensajes
-        messages = []
-        for message_text in all_messages:
-            cleaned_message = self.clean_text(message_text)
-            if cleaned_message in self.processed_messages:
-                continue  # Ignorar mensajes duplicados
-            self.processed_messages.add(cleaned_message)
-            messages.append(cleaned_message)
+            logging.info(f"Se encontraron {len(all_messages)} mensajes en la base de datos.")
 
-        if not messages:
-            logging.error("No se encontraron nuevos mensajes únicos para procesar.")
-            return None  # Asegúrate de que se retorna None si no hay mensajes limpios
+            # Limpiar y procesar los mensajes, evitando duplicados
+            messages = []
+            for message_text in all_messages:
+                cleaned_message = self.clean_text(message_text)
+                if cleaned_message in self.processed_messages:
+                    logging.debug(f"Mensaje duplicado encontrado y omitido: {cleaned_message}")
+                    continue  # Ignorar mensajes duplicados
+                self.processed_messages.add(cleaned_message)
+                messages.append(cleaned_message)
 
-        # Tokenizar los mensajes
-        sequences = self.tokenize_messages(messages)
-        logging.info(f"Se generaron {len(sequences)} secuencias.")
+            if not messages:
+                logging.warning("No se encontraron nuevos mensajes únicos para procesar.")
+                return None  # Asegurarse de que se retorna None si no hay mensajes limpios
 
-        # Generar las secuencias de entrada y etiquetas
-        self.X, self.y = self.generate_sequences_and_labels(sequences)
+            logging.info(f"Se encontraron {len(messages)} nuevos mensajes únicos después del procesamiento.")
 
-        # Verificar que las secuencias se generaron correctamente
-        if self.X is None or len(self.X) == 0 or self.y is None or len(self.y) == 0:
-            logging.error("La preparación de los datos no produjo secuencias válidas.")
+            # Tokenizar los mensajes
+            sequences = self.tokenize_messages(messages)
+            if not sequences or len(sequences) == 0:
+                logging.error("La tokenización no generó secuencias válidas.")
+                return None
+            logging.info(f"Se generaron {len(sequences)} secuencias después de la tokenización.")
+
+            # Generar las secuencias de entrada y etiquetas
+            self.X, self.y = self.generate_sequences_and_labels(sequences)
+
+            # Verificar que las secuencias y etiquetas se generaron correctamente
+            if self.X is None or len(self.X) == 0 or self.y is None or len(self.y) == 0:
+                logging.error("La preparación de los datos no produjo secuencias o etiquetas válidas.")
+                return None
+
+            logging.info(f"Datos preparados correctamente: X tiene forma {self.X.shape}, y tiene forma {self.y.shape}")
+            return True
+
+        except Exception as e:
+            logging.error(f"Error durante la preparación de los datos: {e}")
             return None
 
-        logging.info(f"Datos preparados correctamente: X tiene forma {self.X.shape}, y tiene forma {self.y.shape}")
-
-
-    
     def clean_text(self, text):
-        """Elimina emojis y caracteres especiales, convierte a minúsculas"""
-        # Regex para eliminar emojis
+        """Elimina emojis, caracteres especiales, convierte a minúsculas, y normaliza espacios."""
+        
+        # Regex para eliminar emojis y algunos caracteres unicode adicionales
         emoji_pattern = re.compile(
-            "[" u"\U0001F600-\U0001F64F"  # emoticones
-            u"\U0001F300-\U0001F5FF"  # símbolos y pictogramas
-            u"\U0001F680-\U0001F6FF"  # transportes y símbolos de mapas
-            u"\U0001F1E0-\U0001F1FF"  # banderas
+            "[" u"\U0001F600-\U0001F64F"  # Emoticones
+            u"\U0001F300-\U0001F5FF"  # Símbolos y pictogramas
+            u"\U0001F680-\U0001F6FF"  # Transportes y símbolos de mapas
+            u"\U0001F1E0-\U0001F1FF"  # Banderas
+            u"\U00002702-\U000027B0"  # Otros pictogramas
+            u"\U000024C2-\U0001F251"  # Símbolos adicionales
             "]+", flags=re.UNICODE)
         
-        text = emoji_pattern.sub(r'', text)  # Eliminar emojis
-        text = re.sub(r'[^\w\s]', '', text)  # Eliminar caracteres especiales, excepto palabras y espacios
-        return text.strip().lower()  # Convertir a minúsculas
+        # Eliminar emojis
+        text = emoji_pattern.sub(r'', text)
+
+        # Eliminar caracteres especiales, excepto letras, números y espacios
+        text = re.sub(r'[^\w\s]', '', text)
+
+        # Reemplazar múltiples espacios por un solo espacio
+        text = re.sub(r'\s+', ' ', text)
+
+        # Convertir el texto a minúsculas y eliminar espacios extras
+        return text.strip().lower()
 
     def tokenize_messages(self, messages):
-        """Tokeniza los mensajes y devuelve secuencias y el tokenizer"""
-        self.tokenizer = Tokenizer(num_words=self.num_words, oov_token="<OOV>")
-        self.tokenizer.fit_on_texts(messages)
-        sequences = self.tokenizer.texts_to_sequences(messages)
-        return sequences
+        """Tokeniza los mensajes y devuelve secuencias y el tokenizer."""
+        try:
+            if not messages or len(messages) == 0:
+                logging.error("No se proporcionaron mensajes para tokenizar.")
+                return None, None
+            
+            # Inicializar el tokenizer con el número máximo de palabras y token OOV
+            self.tokenizer = Tokenizer(num_words=self.num_words, oov_token="<OOV>")
+
+            # Filtrar mensajes vacíos o nulos antes de tokenizar
+            valid_messages = [msg for msg in messages if msg.strip()]
+            if len(valid_messages) != len(messages):
+                logging.warning(f"Se han encontrado {len(messages) - len(valid_messages)} mensajes vacíos o inválidos que se omitieron.")
+
+            # Ajustar el tokenizer con los mensajes
+            self.tokenizer.fit_on_texts(valid_messages)
+            
+            # Tokenizar los mensajes
+            sequences = self.tokenizer.texts_to_sequences(valid_messages)
+            
+            logging.info(f"Se tokenizaron {len(valid_messages)} mensajes, generando {len(sequences)} secuencias.")
+            return sequences, self.tokenizer
+
+        except Exception as e:
+            logging.error(f"Error al tokenizar los mensajes: {e}")
+            return None, None
 
     def generate_sequences_and_labels(self, sequences):
-        """Genera secuencias de entrada y etiquetas a partir de los mensajes tokenizados"""
+        """Genera secuencias de entrada y etiquetas a partir de los mensajes tokenizados."""
         X, y = [], []
-        
-        # Asumimos que ya tienes el número de clases (por ejemplo, el tamaño de tu vocabulario o tokenizer)
-        num_classes = self.tokenizer.num_words  # O el tamaño de tu vocabulario si está definido
+
+        # Verificar si num_classes está correctamente inicializado
+        num_classes = self.tokenizer.num_words
+        if num_classes is None or num_classes <= 0:
+            logging.error("El número de clases (num_words en el tokenizer) no está definido correctamente.")
+            return None, None
         
         logging.info(f"Comenzando a generar secuencias y etiquetas. Num clases: {num_classes}")
 
-        for seq_index, seq in enumerate(sequences):
-            logging.debug(f"Procesando secuencia {seq_index + 1}/{len(sequences)}. Longitud de la secuencia: {len(seq)}")
+        try:
+            # Recorrer las secuencias tokenizadas
+            for seq_index, seq in enumerate(sequences):
+                if len(seq) == 0:
+                    logging.warning(f"Secuencia vacía encontrada en el índice {seq_index}, omitiendo.")
+                    continue  # Omitir secuencias vacías
 
-            for i in range(1, len(seq)):
-                input_sequence = seq[:i]
-                target_word = seq[i]
+                logging.debug(f"Procesando secuencia {seq_index + 1}/{len(sequences)}. Longitud de la secuencia: {len(seq)}")
 
-                # Padding para que todas las secuencias tengan la misma longitud
-                input_sequence_padded = pad_sequences([input_sequence], maxlen=self.max_sequence_length)[0]
+                for i in range(1, len(seq)):
+                    input_sequence = seq[:i]
+                    target_word = seq[i]
 
-                # Añadir la secuencia y la etiqueta
-                X.append(input_sequence_padded)
+                    # Padding para asegurar que todas las secuencias tengan la misma longitud
+                    input_sequence_padded = pad_sequences([input_sequence], maxlen=self.max_sequence_length)[0]
 
-                # Convertir la etiqueta (target_word) a one-hot encoding
-                one_hot_target = to_categorical(target_word, num_classes=num_classes)
-                y.append(one_hot_target)
+                    # Agregar la secuencia y la etiqueta
+                    X.append(input_sequence_padded)
 
-                logging.debug(f"Secuencia de entrada (padded): {input_sequence_padded}")
-                logging.debug(f"Palabra objetivo: {target_word}, One-hot encoded: {one_hot_target}")
+                    # Convertir la etiqueta (target_word) a one-hot encoding, asegurando que no exceda el número de clases
+                    if target_word < num_classes:
+                        one_hot_target = to_categorical(target_word, num_classes=num_classes)
+                        y.append(one_hot_target)
+                    else:
+                        logging.warning(f"Palabra objetivo {target_word} fuera de los límites en la secuencia {seq_index}. Omitiendo.")
 
-        X_np = np.array(X)
-        y_np = np.array(y)
+                    logging.debug(f"Secuencia de entrada (padded): {input_sequence_padded}")
+                    logging.debug(f"Palabra objetivo: {target_word}, One-hot encoded: {one_hot_target}")
 
-        # Mostrar la forma de las matrices X e y para depuración
-        logging.info(f"Generación de secuencias completada. Shape de X: {X_np.shape}, Shape de y: {y_np.shape}")
-        
-        return X_np, y_np
+            # Convertir las listas a matrices numpy
+            X_np = np.array(X)
+            y_np = np.array(y)
 
-    
-    def train(self, epochs=10, batch_size=32):
+            # Verificar si se generaron secuencias y etiquetas válidas
+            if X_np.shape[0] == 0 or y_np.shape[0] == 0:
+                logging.error("No se generaron secuencias o etiquetas válidas.")
+                return None, None
+
+            logging.info(f"Generación de secuencias completada. Shape de X: {X_np.shape}, Shape de y: {y_np.shape}")
+            return X_np, y_np
+
+        except Exception as e:
+            logging.error(f"Error durante la generación de secuencias y etiquetas: {e}")
+            return None, None
+
+    def train(self, epochs=10, batch_size=32, validation_split=0.2, use_callbacks=False):
         """Entrena el modelo conversacional"""
         try:
             # Preparar los datos
-            logging.info("Iniciando la preparación de los datos...")
+            logging.info("Iniciando la preparación de los datos para el entrenamiento...")
             self.prepare_data()
 
             # Validar si los datos fueron cargados correctamente
-            if self.X is None or len(self.X) == 0:
-                logging.error("No se pudieron preparar los datos de entrenamiento.")
+            if self.X is None or len(self.X) == 0 or self.y is None or len(self.y) == 0:
+                logging.error("No se pudieron preparar los datos de entrenamiento. X o y son inválidos.")
                 self.is_trained = False
                 return
 
@@ -1458,111 +1684,271 @@ class Conversar:
                 logging.info("El modelo no está definido. Inicializando el modelo...")
                 self.build_model()
 
-            # Entrenar el modelo
-            logging.info("Iniciando el entrenamiento del modelo...")
-            self.model.fit(self.X, self.y, epochs=epochs, batch_size=batch_size)
-            logging.info("Entrenamiento completado.")
+            # Callbacks opcionales para mejorar el entrenamiento
+            callbacks = []
+            if use_callbacks:
+                from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+                callbacks = [
+                    EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True),
+                    ModelCheckpoint(filepath='best_model.h5', monitor='val_loss', save_best_only=True)
+                ]
+                logging.info("Callbacks para EarlyStopping y ModelCheckpoint agregados.")
 
-            # Indicar que el modelo fue entrenado correctamente
+            # Iniciar el entrenamiento del modelo
+            logging.info(f"Iniciando el entrenamiento del modelo con {epochs} épocas y batch_size de {batch_size}.")
+            history = self.model.fit(
+                self.X, self.y,
+                epochs=epochs,
+                batch_size=batch_size,
+                validation_split=validation_split,  # División para validación
+                callbacks=callbacks if use_callbacks else None
+            )
+
+            logging.info("Entrenamiento completado con éxito.")
+
+            # Marcar el modelo como entrenado
             self.is_trained = True
-            logging.info("Entrenamiento del modelo completado con éxito.")
+            logging.info("El modelo ha sido marcado como entrenado.")
 
         except Exception as e:
             logging.error(f"Error durante el entrenamiento del modelo: {e}")
             self.is_trained = False
      
-    def ajustar_temperatura(self, input_text):
-        """Ajusta la temperatura en función de la longitud del input_text."""
-        if len(input_text.split()) <= 3:
-            return 0.7  # Respuestas más conservadoras para textos cortos
-        elif len(input_text.split()) > 10:
-            return 1.5  # Respuestas más creativas para textos más largos
+    def ajustar_temperatura(self, input_text, short_temp=0.7, long_temp=1.5, standard_temp=1.0, short_limit=3, long_limit=10):
+        """
+        Ajusta la temperatura en función de la longitud del input_text.
+
+        Args:
+            input_text (str): Texto de entrada proporcionado por el usuario.
+            short_temp (float): Temperatura para textos cortos.
+            long_temp (float): Temperatura para textos largos.
+            standard_temp (float): Temperatura estándar para textos de longitud media.
+            short_limit (int): Límite de palabras para considerar un texto como corto.
+            long_limit (int): Límite de palabras para considerar un texto como largo.
+
+        Returns:
+            float: Temperatura ajustada en función de la longitud del texto.
+        """
+        if not input_text or len(input_text.strip()) == 0:
+            logging.warning("El texto de entrada está vacío o solo contiene espacios.")
+            return standard_temp  # Valor estándar si el texto está vacío
+
+        word_count = len(input_text.split())
+
+        if word_count <= short_limit:
+            logging.info(f"Texto corto detectado ({word_count} palabras). Usando temperatura {short_temp}.")
+            return short_temp  # Temperatura para textos cortos
+        elif word_count > long_limit:
+            logging.info(f"Texto largo detectado ({word_count} palabras). Usando temperatura {long_temp}.")
+            return long_temp  # Temperatura para textos largos
         else:
-            return 1.0  # Valor estándar de temperatura
+            logging.info(f"Texto de longitud media detectado ({word_count} palabras). Usando temperatura {standard_temp}.")
+            return standard_temp  # Temperatura estándar
     
     def filtrar_predicciones(self, predicted_probs):
-        """Aplica un filtro para penalizar palabras con muy baja o alta frecuencia."""
-        # Por ejemplo, puedes aplicar una penalización a palabras extremadamente comunes o raras
+        """
+        Aplica un filtro para penalizar palabras con muy baja o alta frecuencia.
+
+        Args:
+            predicted_probs (numpy array): Array de probabilidades predichas para cada palabra en el vocabulario.
+
+        Returns:
+            numpy array: Probabilidades ajustadas con penalizaciones y aumentos aplicados.
+        """
+        # Verificar que las probabilidades predichas son válidas
+        if predicted_probs is None or len(predicted_probs) != self.num_words:
+            logging.error("El tamaño de las probabilidades predichas no coincide con el tamaño del vocabulario.")
+            return predicted_probs
+
+        # Inicializar las listas de palabras frecuentes y raras si no están definidas
+        if not hasattr(self, 'frequent_words'):
+            self.frequent_words = []
+            logging.warning("La lista 'frequent_words' no estaba definida. Se inicializa como lista vacía.")
+            
+        if not hasattr(self, 'rare_words'):
+            self.rare_words = []
+            logging.warning("La lista 'rare_words' no estaba definida. Se inicializa como lista vacía.")
+        
+        # Crear una copia de las probabilidades para aplicar los cambios
         penalized_probs = np.copy(predicted_probs)
-        for index in range(self.num_words):
-            if index in self.frequent_words:
-                penalized_probs[index] *= 0.5  # Penalizar palabras muy frecuentes
-            elif index in self.rare_words:
-                penalized_probs[index] *= 1.5  # Aumentar palabras más raras para creatividad
-        return penalized_probs / np.sum(penalized_probs)  # Reescalar las probabilidades
+
+        try:
+            # Penalizar palabras frecuentes
+            if len(self.frequent_words) > 0:
+                penalized_probs[self.frequent_words] *= 0.5
+                logging.info(f"Se penalizaron {len(self.frequent_words)} palabras frecuentes.")
+
+            # Aumentar la probabilidad de palabras raras
+            if len(self.rare_words) > 0:
+                penalized_probs[self.rare_words] *= 1.5
+                logging.info(f"Se aumentó la probabilidad de {len(self.rare_words)} palabras raras.")
+
+            # Asegurarse de que las probabilidades no excedan los límites [0, 1]
+            penalized_probs = np.clip(penalized_probs, 0, 1)
+
+            # Reescalar las probabilidades para que sumen 1
+            penalized_probs /= np.sum(penalized_probs)
+            logging.info("Las probabilidades han sido reescaladas correctamente.")
+
+        except Exception as e:
+            logging.error(f"Error durante el filtrado de predicciones: {e}")
+            return predicted_probs  # Retornar las probabilidades originales si ocurre un error
+
+        return penalized_probs
     
     def generar_respuestas_multiples(self, input_text, n_respuestas=3):
-        """Genera múltiples respuestas y selecciona la mejor basada en la probabilidad."""
-        respuestas = []
-        for _ in range(n_respuestas):
-            respuesta = self.generate_response(input_text)
-            respuestas.append(respuesta)
+        """
+        Genera múltiples respuestas y selecciona la mejor basada en la probabilidad o métrica de coherencia.
         
-        # Aquí podrías aplicar alguna métrica para elegir la mejor
-        return respuestas  # O seleccionar la más común o adecuada
-    
-    def ajuste_fino(self, nuevos_datos, epochs=2):
-        """Realiza ajuste fino del modelo conversacional con nuevos datos."""
-        logging.info("Iniciando el ajuste fino del modelo conversacional con nuevos datos...")
+        Args:
+            input_text (str): El texto de entrada para generar respuestas.
+            n_respuestas (int): Número de respuestas a generar.
+
+        Returns:
+            str: La mejor respuesta generada.
+        """
+        respuestas = []
 
         try:
-            # Limpiar los nuevos datos
-            nuevos_datos_limpios = self.limpiar_datos(nuevos_datos)
+            # Generar múltiples respuestas
+            logging.info(f"Generando {n_respuestas} respuestas para el texto: {input_text}")
+            for i in range(n_respuestas):
+                respuesta = self.generate_response(input_text)
+                
+                # Verificar que la respuesta no sea vacía o inválida
+                if respuesta and len(respuesta.strip()) > 0:
+                    respuestas.append(respuesta)
+                    logging.debug(f"Respuesta {i + 1}: {respuesta}")
+                else:
+                    logging.warning(f"Se generó una respuesta vacía o inválida en la iteración {i + 1}.")
+            
+            if not respuestas:
+                logging.error("No se generaron respuestas válidas.")
+                return None
 
-            # Generar secuencias y etiquetas
-            nuevas_X, nuevas_y = self.generar_secuencias_y_etiquetas(nuevos_datos_limpios)
+            logging.info(f"Se generaron {len(respuestas)} respuestas válidas.")
 
-            # Validar que se hayan generado secuencias y etiquetas correctamente
-            if nuevas_X is None or len(nuevas_X) == 0:
-                logging.error("No se generaron nuevas secuencias para ajuste fino.")
-                return
+            # Seleccionar la mejor respuesta, puedes añadir más criterios aquí
+            mejor_respuesta = max(set(respuestas), key=respuestas.count)
+            logging.info(f"La mejor respuesta seleccionada: {mejor_respuesta}")
 
-            if nuevas_y is None or len(nuevas_y) == 0:
-                logging.error("No se generaron nuevas etiquetas para ajuste fino.")
-                return
+            # Si hay empate en el conteo de respuestas, puedes aplicar otro criterio, como la longitud
+            respuestas_empatadas = [resp for resp in respuestas if respuestas.count(resp) == respuestas.count(mejor_respuesta)]
+            
+            if len(respuestas_empatadas) > 1:
+                # En caso de empate, selecciona la respuesta más larga
+                mejor_respuesta = max(respuestas_empatadas, key=len)
+                logging.info(f"Hubo empate. Seleccionada la respuesta más larga: {mejor_respuesta}")
 
-            # Realizar el ajuste fino con los nuevos datos
-            self.model.fit(nuevas_X, nuevas_y, epochs=epochs, batch_size=32, verbose=1)
-            logging.info("Ajuste fino del modelo conversacional completado con éxito.")
+            return mejor_respuesta
 
         except Exception as e:
-            logging.error(f"Error durante el ajuste fino del modelo conversacional: {e}")
-
-        logging.info("Ajuste fino completado.")
-
-    def limpiar_datos(self, nuevos_datos):
-        """Limpia los datos nuevos aplicando la función clean_text."""
-        try:
-            datos_limpios = [self.clean_text(texto) for texto in nuevos_datos]
-            logging.info(f"Datos limpios generados: {len(datos_limpios)} ejemplos.")
-            return datos_limpios
-        except Exception as e:
-            logging.error(f"Error al limpiar los datos para ajuste fino: {e}")
+            logging.error(f"Error al generar respuestas múltiples: {e}")
             return None
 
-    def generar_secuencias_y_etiquetas(self, nuevos_datos_limpios):
-        """Genera secuencias y etiquetas a partir de los datos nuevos limpios."""
+    def limpiar_datos(self, nuevos_datos):
+        """
+        Limpia los datos nuevos aplicando la función clean_text.
+
+        Args:
+            nuevos_datos (list): Lista de datos de texto que necesitan limpieza.
+
+        Returns:
+            list: Lista de datos limpios.
+        """
         try:
+            # Validar que los datos no sean nulos o vacíos
+            if not nuevos_datos or len(nuevos_datos) == 0:
+                logging.warning("Los datos proporcionados están vacíos o son nulos.")
+                return []
+
+            # Limpiar los datos utilizando la función clean_text
+            datos_limpios = [self.clean_text(texto) for texto in nuevos_datos if texto.strip()]
+            
+            if len(datos_limpios) == 0:
+                logging.warning("Todos los datos proporcionados estaban vacíos o no válidos después de la limpieza.")
+                return []
+
+            logging.info(f"Datos limpios generados: {len(datos_limpios)} ejemplos.")
+            return datos_limpios
+
+        except TypeError as te:
+            logging.error(f"Tipo de datos no válido al limpiar los datos: {te}")
+            return []
+        except Exception as e:
+            logging.error(f"Error inesperado al limpiar los datos para ajuste fino: {e}")
+            return []
+
+    def generar_secuencias_y_etiquetas(self, nuevos_datos_limpios):
+        """
+        Genera secuencias y etiquetas a partir de los datos nuevos limpios.
+
+        Args:
+            nuevos_datos_limpios (list): Lista de datos limpios (texto) para procesar.
+
+        Returns:
+            tuple: Dos arreglos numpy (X, y) con las secuencias de entrada y las etiquetas, respectivamente.
+        """
+        try:
+            # Verificar que los datos de entrada no estén vacíos
+            if not nuevos_datos_limpios or len(nuevos_datos_limpios) == 0:
+                logging.warning("Los datos limpios están vacíos o no son válidos.")
+                return np.array([]), np.array([])
+
             # Tokenizar los datos limpios
             nuevas_secuencias = self.tokenizer.texts_to_sequences(nuevos_datos_limpios)
-            logging.info(f"Secuencias generadas: {len(nuevas_secuencias)} secuencias.")
+            
+            # Verificar que se generaron secuencias válidas
+            if len(nuevas_secuencias) == 0:
+                logging.warning("La tokenización no generó secuencias válidas.")
+                return np.array([]), np.array([])
 
-            # Generar las secuencias de entrada y las etiquetas a partir de las secuencias tokenizadas
+            logging.info(f"Se generaron {len(nuevas_secuencias)} secuencias a partir de los datos limpios.")
+
+            # Generar las secuencias de entrada y etiquetas
             nuevas_X, nuevas_y = self.generate_sequences_and_labels(nuevas_secuencias)
-            logging.info(f"Secuencias de entrada y etiquetas generadas para ajuste fino.")
 
+            # Validar que las secuencias y etiquetas son válidas
+            if nuevas_X is None or nuevas_y is None or len(nuevas_X) == 0 or len(nuevas_y) == 0:
+                logging.warning("Las secuencias o etiquetas generadas no son válidas.")
+                return np.array([]), np.array([])
+
+            logging.info(f"Secuencias de entrada y etiquetas generadas exitosamente: X.shape={nuevas_X.shape}, y.shape={nuevas_y.shape}.")
             return nuevas_X, nuevas_y
+
         except Exception as e:
             logging.error(f"Error al generar secuencias y etiquetas: {e}")
-            return None, None
+            return np.array([]), np.array([])
 
+    def mantener_contexto(self, user_id, input_text, contexto_dict):
+        """
+        Mantiene el contexto de la conversación para generar respuestas más coherentes. 
+        Verifica las interacciones previas del usuario.
 
-    def mantener_contexto(self, input_text, contexto):
-        """Mantiene el contexto de la conversación para generar respuestas más coherentes."""
-        contexto.append(input_text)
-        if len(contexto) > 5:  # Mantener el contexto con una longitud máxima de 5 entradas
-            contexto.pop(0)
-        
+        Args:
+            user_id (str): ID del usuario que envía el mensaje.
+            input_text (str): El mensaje actual del usuario.
+            contexto_dict (dict): Diccionario que almacena el contexto de los usuarios. La clave es el user_id.
+
+        Returns:
+            str: Respuesta generada basada en el contexto.
+        """
+        # Verificar si ya existe un contexto previo para este usuario
+        if user_id not in contexto_dict:
+            contexto_dict[user_id] = []  # Iniciar el contexto para el usuario si no existe
+
+        # Agregar el nuevo mensaje al contexto del usuario
+        contexto_dict[user_id].append(input_text)
+
+        # Mantener un máximo de 5 interacciones en el contexto
+        if len(contexto_dict[user_id]) > 5:
+            contexto_dict[user_id].pop(0)
+
         # Unir el contexto en una cadena de texto para generar una respuesta más coherente
-        texto_completo = " ".join(contexto)
-        return self.generate_response(texto_completo)
+        texto_completo = " ".join(contexto_dict[user_id])
+        logging.info(f"Contexto actual para el usuario {user_id}: {texto_completo}")
+
+        # Generar la respuesta basada en todo el contexto actual
+        respuesta = self.generate_response(texto_completo)
+
+        return respuesta
