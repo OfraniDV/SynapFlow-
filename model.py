@@ -208,12 +208,32 @@ class NumerologyModel:
             nuevas_X = pad_sequences(nuevas_X, maxlen=self.max_sequence_length)
             nuevas_y = self.mlb.fit_transform(respuestas)
 
+            # Revisar dimensiones de las características y etiquetas
+            logging.info(f"Forma de nuevas_X: {nuevas_X.shape}")
+            logging.info(f"Forma de nuevas_y: {nuevas_y.shape}")
+            
+            # Verificar si las dimensiones de nuevas_X y nuevas_y coinciden
+            if nuevas_X.shape[0] != nuevas_y.shape[0]:
+                logging.error(f"Las dimensiones de nuevas_X ({nuevas_X.shape}) y nuevas_y ({nuevas_y.shape}) no coinciden.")
+                return
+
+            # Verificar la cantidad de clases (columnas de nuevas_y) y ajustar el modelo si es necesario
+            if nuevas_y.shape[1] != self.model.output_shape[1]:
+                logging.warning(f"El número de clases en nuevas_y ({nuevas_y.shape[1]}) no coincide con la salida del modelo ({self.model.output_shape[1]}). Ajustando la capa de salida.")
+                from tensorflow.keras.layers import Dense
+                self.model.pop()  # Eliminar la última capa
+                self.model.add(Dense(nuevas_y.shape[1], activation='sigmoid'))
+                self.model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
+                logging.info(f"Capa de salida del modelo ajustada a {nuevas_y.shape[1]} clases.")
+
             # Realizar el ajuste fino del modelo basado en las fórmulas
+            logging.info("Comenzando el ajuste fino del modelo.")
             self.model.fit(nuevas_X, nuevas_y, epochs=2, batch_size=10)
             logging.info("Ajustes finos aplicados exitosamente basados en las fórmulas.")
 
         except Exception as e:
             logging.error(f"Error al aplicar ajustes finos: {e}")
+
 
     def ajuste_fino(self):
         """Realiza un ajuste fino en el modelo de numerología utilizando solo fórmulas extraídas."""
