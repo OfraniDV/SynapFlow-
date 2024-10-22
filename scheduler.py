@@ -1,3 +1,4 @@
+# scheduler.py
 import schedule
 import time
 import threading
@@ -13,21 +14,10 @@ def start_scheduler(numerology_model, conversar_model):
             numerology_model.train()
             logging.info("✔️ Modelo de numerología reentrenado exitosamente.")
             
-            # Realizar ajuste fino en el modelo conversacional con nuevos mensajes
+            # Realizar ajuste fino en el modelo conversacional utilizando los datos almacenados
             logging.info("----- Iniciando proceso de ajuste fino del modelo conversacional -----")
-            nuevos_datos = conversar_model.db.get_new_messages()
-
-            if nuevos_datos:
-                logging.info(f"Se encontraron {len(nuevos_datos)} nuevos mensajes para el ajuste fino del modelo conversacional.")
-                # Procesar los datos en lotes de 10 mensajes
-                for i in range(0, len(nuevos_datos), 10):
-                    lote = nuevos_datos[i:i + 10]
-                    logging.debug(f"Procesando lote de {len(lote)} mensajes: {lote}")
-                    conversar_model.realizar_ajuste_fino(lote)  # Ajuste fino con un lote de 10 interacciones
-                    logging.info(f"✔️ Lote de {len(lote)} mensajes procesado correctamente.")
-                logging.info(f"✔️ Ajuste fino del modelo conversacional completado exitosamente con un total de {len(nuevos_datos)} mensajes.")
-            else:
-                logging.info("No se encontraron nuevos datos para ajuste fino del modelo conversacional.")
+            conversar_model.realizar_ajuste_fino()
+            logging.info("✔️ Ajuste fino del modelo conversacional completado exitosamente.")
             
         except Exception as e:
             logging.error(f"❌ Error durante el reentrenamiento de los modelos: {e}")
@@ -46,4 +36,3 @@ def start_scheduler(numerology_model, conversar_model):
     scheduler_thread.daemon = True  # Para que se detenga cuando el programa principal termine
     scheduler_thread.start()
     logging.info("✔️ Hilo del scheduler iniciado correctamente.")
-
