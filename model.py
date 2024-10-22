@@ -1264,6 +1264,7 @@ class Conversar:
                 logging.warning("El texto de entrada o la respuesta están vacíos. No se almacenarán.")
                 return
 
+            # Verificar si la respuesta es suficientemente larga para el ajuste fino
             if len(output_text.split()) < 3:
                 logging.warning(f"Respuesta demasiado corta, no se almacenará para ajuste fino: {output_text}")
                 return
@@ -1271,24 +1272,28 @@ class Conversar:
             # Crear los datos que serán almacenados
             data = {"input": input_text, "response": output_text}
 
-            # Verificar si el archivo ya existe y evitar duplicados si es necesario
+            # Verificar si el archivo ya existe para evitar duplicados
             ajuste_fino_file = 'ajuste_fino_datos.pkl'
+            data_exists = False
             if os.path.exists(ajuste_fino_file):
                 with open(ajuste_fino_file, 'rb') as f:
                     try:
-                        # Verificar si el mismo par de datos ya existe
                         while True:
                             existing_data = pickle.load(f)
                             if existing_data == data:
+                                data_exists = True
                                 logging.info("Datos duplicados encontrados. No se almacenarán nuevamente.")
-                                return
+                                break
                     except EOFError:
-                        pass  # Fin del archivo alcanzado, no se encontraron duplicados
-            
-            # Almacenar los datos
-            with open(ajuste_fino_file, 'ab') as f:
-                pickle.dump(data, f)
-            logging.info("Datos almacenados para ajuste fino correctamente.")
+                        pass  # Fin del archivo alcanzado
+                    except pickle.UnpicklingError as e:
+                        logging.error(f"Error al deserializar datos en el archivo existente: {e}")
+
+            # Si no hay datos duplicados, guardarlos
+            if not data_exists:
+                with open(ajuste_fino_file, 'ab') as f:
+                    pickle.dump(data, f)
+                logging.info("Datos almacenados para ajuste fino correctamente.")
 
             # Opcional: Verificar el tamaño del archivo tras cada escritura
             file_size = os.path.getsize(ajuste_fino_file)
@@ -1296,6 +1301,74 @@ class Conversar:
 
         except Exception as e:
             logging.error(f"Error al almacenar datos para ajuste fino: {e}")
+
+    def primer_ajuste_fino(self, datos_entrenamiento=None, epochs=5):
+        """
+        Realiza el ajuste fino inicial del modelo conversacional utilizando los datos almacenados
+        o datos proporcionados manualmente.
+        
+        Args:
+            datos_entrenamiento (list, optional): Lista de datos de entrenamiento. Si no se proporcionan,
+                                                se usarán los datos guardados previamente.
+            epochs (int): Número de épocas para entrenar el modelo.
+        """
+        logger.info("Iniciando el primer ajuste fino del modelo conversacional.")
+
+        # Si no se proporcionan datos de entrenamiento, cargarlos desde los archivos existentes
+        if datos_entrenamiento is None:
+            logger.info("No se proporcionaron datos de entrenamiento. Cargando desde archivos.")
+            datos_entrenamiento = []
+            try:
+                for file in os.listdir('.'):
+                    if file.startswith('ajuste_fino_datos') and file.endswith('.pkl'):
+                        with open(file, 'rb') as f:
+                            while True:
+                                try:
+                                    data = pickle.load(f)
+                                    if isinstance(data, dict) and 'input' in data and 'response' in data:
+                                        datos_entrenamiento.append(data)
+                                    else:
+                                        logger.error(f"Formato de datos incorrecto o faltan claves en {file}: {data}")
+                                except EOFError:
+                                    break
+                                except pickle.UnpicklingError as e:
+                                    logger.error(f"Error al deserializar datos del archivo {file}: {e}")
+                                    break
+            except Exception as e:
+                logger.error(f"Error al cargar los datos almacenados para ajuste fino: {e}")
+
+        # Si no se encontraron datos, abortar el proceso
+        if not datos_entrenamiento:
+            logger.warning("No se encontraron datos suficientes para realizar el ajuste fino.")
+            return
+
+        # Preprocesar los datos y tokenizarlos
+        inputs = [data["input"] for data in datos_entrenamiento if isinstance(data["input"], str)]
+        respuestas = [data["response"] for data in datos_entrenamiento if isinstance(data["response"], str)]
+
+        if len(inputs) == 0 or len(respuestas) == 0:
+            logger.error("No se encontraron entradas o respuestas válidas para el ajuste fino.")
+            return
+
+        # Tokenización y padding de secuencias
+        sequences = self.tokenizer.texts_to_sequences(inputs)
+        X = pad_sequences(sequences, maxlen=self.max_sequence_length)
+
+        response_sequences = self.tokenizer.texts_to_sequences(respuestas)
+        y = pad_sequences(response_sequences, maxlen=self.max_sequence_length)
+
+        if len(X) == 0 or len(y) == 0:
+            logger.error("No se generaron secuencias o etiquetas válidas.")
+            return
+
+        # Ajuste fino del modelo
+        try:
+            logger.info(f"Entrenando el modelo local con {len(X)} ejemplos nuevos para ajuste fino.")
+            self.model.fit(X, y, epochs=epochs, batch_size=32)
+            logger.info("Ajuste fino del modelo local completado con éxito.")
+        except Exception as e:
+            logger.error(f"Error durante el ajuste fino del modelo: {e}")
+
 
     def realizar_ajuste_fino(self, nuevos_datos=None, epochs=2):
         """
@@ -1325,7 +1398,11 @@ class Conversar:
                         with open(file, 'rb') as f:
                             while True:
                                 try:
-                                    datos_para_ajuste.append(pickle.load(f))
+                                    data = pickle.load(f)
+                                    if isinstance(data, dict) and 'input' in data and 'response' in data:
+                                        datos_para_ajuste.append(data)
+                                    else:
+                                        logger.error(f"Formato de datos incorrecto o faltan claves en {file}: {data}")
                                 except EOFError:
                                     break
                                 except pickle.UnpicklingError as e:
@@ -1337,9 +1414,14 @@ class Conversar:
                 return
             
             # Tokenizar las entradas y generar secuencias
-            inputs = [data["input"] for data in datos_para_ajuste]
-            respuestas = [data["response"] for data in datos_para_ajuste]
+            inputs = [data["input"] for data in datos_para_ajuste if isinstance(data["input"], str)]
+            respuestas = [data["response"] for data in datos_para_ajuste if isinstance(data["response"], str)]
 
+            if len(inputs) == 0 or len(respuestas) == 0:
+                logger.error("No se encontraron entradas o respuestas válidas.")
+                return
+
+            # Tokenización y padding de secuencias
             sequences = self.tokenizer.texts_to_sequences(inputs)
             X = pad_sequences(sequences, maxlen=self.max_sequence_length)
 
@@ -1350,12 +1432,14 @@ class Conversar:
                 logger.error("No se generaron secuencias o etiquetas válidas.")
                 return
 
+            # Ajuste fino del modelo
             logger.info(f"Entrenando el modelo local con {len(X)} ejemplos nuevos para ajuste fino.")
             self.model.fit(X, y, epochs=epochs, batch_size=32)
             logger.info("Ajuste fino del modelo local completado con éxito.")
-        
+
         except Exception as e:
             logger.error(f"Error durante el ajuste fino Conversar Model: {e}")
+
 
     def model_generate_response(self, input_text, temperature=1.0, max_words=20):
         """Genera una respuesta utilizando el modelo local."""
