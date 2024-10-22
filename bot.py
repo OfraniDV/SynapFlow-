@@ -7,23 +7,88 @@ import importlib
 from functools import partial
 from dotenv import load_dotenv
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
+import telegram
+import traceback
+from telegram import Update
+from telegram.ext import CallbackContext
 
 # Importar otros módulos del proyecto
 from model import NumerologyModel, Conversar
 from database import Database
 from scheduler import start_scheduler  # Importar el scheduler
 
-#Importar el Feedback
+# Importar el Feedback
 from commands.feedback import feedback  # Asegúrate de tener el archivo feedback.py en la carpeta commands
-
-# Configuración del logger
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Cargar variables de entorno
 load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
-VIP_GROUP_ID = os.getenv('VIP_GROUP_ID') 
+VIP_GROUP_ID = os.getenv('VIP_GROUP_ID')
+CHANNEL_ERROR_ID = os.getenv('CHANNEL_ERROR_ID')  # ID del canal de error
+
+# Inicializar el bot de Telegram
+bot = telegram.Bot(token=BOT_TOKEN)
+
+# Configuración del logger
+log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+date_format = '%Y-%m-%d %H:%M:%S'
+logger = logging.getLogger(__name__)
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+logger.setLevel(log_level)
+
+# Manejador para la consola
+console_handler = logging.StreamHandler()
+console_handler.setLevel(log_level)
+console_formatter = logging.Formatter(log_format, datefmt=date_format)
+console_handler.setFormatter(console_formatter)
+
+# Manejador para archivo de log
+file_handler = logging.FileHandler('bot_errors.log', mode='a')
+file_handler.setLevel(log_level)
+file_formatter = logging.Formatter(log_format, datefmt=date_format)
+file_handler.setFormatter(file_formatter)
+
+# Agregar manejadores al logger
+logger.addHandler(console_handler)
+logger.addHandler(file_handler)
+
+logger.info('Bot iniciado correctamente.')
+
+
+# Función asíncrona para enviar errores a un canal de Telegram
+async def notify_error_to_channel(error_message):
+    try:
+        await bot.send_message(chat_id=CHANNEL_ERROR_ID, text=f"🚨 Error en el bot:\n{error_message}")
+        logger.info(f"Error notificado al canal de Telegram {CHANNEL_ERROR_ID}")
+    except Exception as e:
+        logger.error(f"Error al enviar notificación al canal: {e}")
+
+
+# Manejador de errores de Telegram
+async def error_handler(update: Update, context: CallbackContext):
+    error_message = f"Error en el bot: {context.error}"
+    
+    # Registrar el error en los logs
+    logger.error(f"Excepción no controlada: {context.error}", exc_info=True)
+    
+    # Enviar el error al canal de Telegram
+    await notify_error_to_channel(error_message)
+
+# Manejador global de excepciones
+def global_exception_handler(exc_type, exc_value, exc_traceback):
+    if issubclass(exc_type, KeyboardInterrupt):
+        sys.__excepthook__(exc_type, exc_value, exc_traceback)
+        return
+    
+    # Formatear el error
+    error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    logger.error(f"Excepción no controlada: {error_msg}")
+    
+    # Enviar el error al canal de Telegram
+    asyncio.run(notify_error_to_channel(error_msg))
+
+# Registrar el manejador global de excepciones
+sys.excepthook = global_exception_handler
 
 # Establecer el event loop en Windows
 if sys.platform.startswith("win"):
@@ -101,28 +166,6 @@ def main():
     conversar_model = Conversar(db)
     conversar_model.cargar_modelo()
 
-    # Realizar ajuste fino del modelo conversacional al iniciar
-    try:
-        nuevos_datos = db.get_new_messages()  # Obtener nuevos mensajes de la base de datos
-        if nuevos_datos:
-            conversar_model.ajuste_fino(nuevos_datos)
-            logger.info("Ajuste fino inicial del modelo conversacional completado exitosamente.")
-        else:
-            logger.info("No se encontraron nuevos datos para el ajuste fino inicial.")
-    except Exception as e:
-        logger.error(f"Error durante el ajuste fino inicial: {e}")
-
-    # Realizar ajuste fino del modelo de numerología si hay nuevos datos
-    try:
-        nuevos_datos_numerologia = db.get_numerology_adjustments()  # Obtener nuevos datos específicos para numerología
-        if nuevos_datos_numerologia:
-            numerology_model.ajuste_fino(nuevos_datos_numerologia)  # Realizar el ajuste fino
-            logger.info("Ajuste fino inicial del modelo de numerología completado exitosamente.")
-        else:
-            logger.info("No se encontraron nuevos datos para el ajuste fino de numerología.")
-    except Exception as e:
-        logger.error(f"Error durante el ajuste fino del modelo de numerología: {e}")
-
     # Crear la aplicación de Telegram
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
@@ -130,7 +173,10 @@ def main():
     load_commands(application, db, numerology_model, conversar_model)
 
     # Registrar el MessageHandler para mensajes de texto generales
-    register_message_handler(application, db, conversar_model, numerology_model)  # Se agregó numerology_model
+    register_message_handler(application, db, conversar_model, numerology_model)
+
+    # Agregar manejador de errores global
+    application.add_error_handler(error_handler)
 
     # Iniciar el scheduler para el reentrenamiento periódico
     start_scheduler(numerology_model, conversar_model)

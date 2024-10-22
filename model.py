@@ -29,9 +29,36 @@ from dotenv import load_dotenv
 # Cargar variables de entorno
 load_dotenv()
 
-# Configuración del logger
-logging.basicConfig(level=logging.INFO)
+
+# Crear un formateador personalizado
+log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+date_format = '%Y-%m-%d %H:%M:%S'
+
+# Configurar el logger
 logger = logging.getLogger(__name__)
+
+# Configurar el nivel de logging a través de una variable de entorno (si existe) o por defecto a INFO
+log_level = os.getenv("LOG_LEVEL", "INFO").upper()
+logger.setLevel(log_level)
+
+# Crear un manejador para la consola
+console_handler = logging.StreamHandler()
+console_handler.setLevel(log_level)
+console_formatter = logging.Formatter(log_format, datefmt=date_format)
+console_handler.setFormatter(console_formatter)
+
+# Crear un manejador para un archivo de log
+file_handler = logging.FileHandler('app.log', mode='a')  # Guarda en un archivo llamado 'app.log'
+file_handler.setLevel(log_level)
+file_formatter = logging.Formatter(log_format, datefmt=date_format)
+file_handler.setFormatter(file_formatter)
+
+# Agregar los manejadores al logger
+logger.addHandler(console_handler)
+logger.addHandler(file_handler)
+
+logger.info('Logger inicializado correctamente.')
+
 
 
 class NumerologyModel:
@@ -1376,7 +1403,15 @@ class Conversar:
     def generate_sequences_and_labels(self, sequences):
         """Genera secuencias de entrada y etiquetas a partir de los mensajes tokenizados"""
         X, y = [], []
-        for seq in sequences:
+        
+        # Asumimos que ya tienes el número de clases (por ejemplo, el tamaño de tu vocabulario o tokenizer)
+        num_classes = self.tokenizer.num_words  # O el tamaño de tu vocabulario si está definido
+        
+        logging.info(f"Comenzando a generar secuencias y etiquetas. Num clases: {num_classes}")
+
+        for seq_index, seq in enumerate(sequences):
+            logging.debug(f"Procesando secuencia {seq_index + 1}/{len(sequences)}. Longitud de la secuencia: {len(seq)}")
+
             for i in range(1, len(seq)):
                 input_sequence = seq[:i]
                 target_word = seq[i]
@@ -1386,9 +1421,21 @@ class Conversar:
 
                 # Añadir la secuencia y la etiqueta
                 X.append(input_sequence_padded)
-                y.append(target_word)
+
+                # Convertir la etiqueta (target_word) a one-hot encoding
+                one_hot_target = to_categorical(target_word, num_classes=num_classes)
+                y.append(one_hot_target)
+
+                logging.debug(f"Secuencia de entrada (padded): {input_sequence_padded}")
+                logging.debug(f"Palabra objetivo: {target_word}, One-hot encoded: {one_hot_target}")
+
+        X_np = np.array(X)
+        y_np = np.array(y)
+
+        # Mostrar la forma de las matrices X e y para depuración
+        logging.info(f"Generación de secuencias completada. Shape de X: {X_np.shape}, Shape de y: {y_np.shape}")
         
-        return np.array(X), np.array(y)
+        return X_np, y_np
 
     
     def train(self, epochs=10, batch_size=32):
@@ -1519,4 +1566,3 @@ class Conversar:
         # Unir el contexto en una cadena de texto para generar una respuesta más coherente
         texto_completo = " ".join(contexto)
         return self.generate_response(texto_completo)
-
