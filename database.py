@@ -129,6 +129,7 @@ class Database:
             logging.error(f"Error verificando el grupo: {e}")
             return False
 
+
     def delete_group(self, group_id):
         """
         Elimina un grupo de la tabla group_converse basado en el group_id.
