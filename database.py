@@ -1,14 +1,18 @@
 import psycopg2
+from psycopg2 import pool
 import os
 from datetime import datetime, timedelta
 import logging
 from dotenv import load_dotenv
 
+
 load_dotenv()
 
 class Database:
     def __init__(self):
-        self.conn = psycopg2.connect(
+        # Inicializar el pool de conexiones con un rango de 1 a 10 conexiones
+        self.connection_pool = psycopg2.pool.SimpleConnectionPool(
+            1, 10,  # Mínimo 1, máximo 10 conexiones
             host=os.getenv('DB_HOST'),
             port=os.getenv('DB_PORT'),
             dbname=os.getenv('DB_NAME'),
@@ -20,98 +24,34 @@ class Database:
         # Crear las tablas si no existen
         self.create_tables()
 
-
     def get_conn(self):
+        """Obtener una conexión del pool"""
         return self.connection_pool.getconn()
 
     def put_conn(self, conn):
+        """Devolver la conexión al pool"""
         self.connection_pool.putconn(conn)
 
-    def close_connection(self):
-        """Cierra la conexión a la base de datos"""
-        try:
-            if self.conn:
-                self.conn.close()
-                logging.info("Conexión a la base de datos cerrada correctamente.")
-        except Exception as e:
-            logging.error(f"Error al cerrar la conexión de la base de datos: {e}")
+    def close_all_connections(self):
+        """Cerrar todas las conexiones en el pool"""
+        self.connection_pool.closeall()
 
     def create_tables(self):
         """Crea las tablas necesarias si no existen"""
+        conn = self.get_conn()
         try:
-            with self.conn.cursor() as cur:
-                # Crear la tabla de charadas con la restricción UNIQUE en la columna numero
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS charadas (
-                        id SERIAL PRIMARY KEY,
-                        numero INTEGER NOT NULL,
-                        significado TEXT NOT NULL,
-                        UNIQUE(numero, significado)  -- Agregar restricción única en número y significado
-                    );
-                """)
-                self.conn.commit()
+            with conn.cursor() as cur:
+                cur.execute("""CREATE TABLE IF NOT EXISTS charadas (id SERIAL PRIMARY KEY, numero INTEGER NOT NULL, significado TEXT NOT NULL, UNIQUE(numero, significado));""")
+                cur.execute("""CREATE TABLE IF NOT EXISTS processed_messages (id SERIAL PRIMARY KEY, mensaje TEXT UNIQUE NOT NULL, processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);""")
+                cur.execute("""CREATE TABLE IF NOT EXISTS logsfirewallids (id SERIAL PRIMARY KEY, user_id BIGINT, nombre TEXT, alias TEXT, grupo BIGINT, nombregrupo TEXT, privado BOOLEAN, fechareciente TIMESTAMP DEFAULT CURRENT_TIMESTAMP, ultima_notificacion TIMESTAMP DEFAULT NULL, notificado BOOLEAN DEFAULT false, expulsado BOOLEAN DEFAULT false, biografia TEXT, chatgpt BOOLEAN DEFAULT false, mensaje TEXT);""")
+                cur.execute("""CREATE TABLE IF NOT EXISTS feedback (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL, feedback_type TEXT NOT NULL, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP);""")
+                cur.execute("""CREATE TABLE IF NOT EXISTS group_converse (id SERIAL PRIMARY KEY, type TEXT, serial TEXT, group_id BIGINT UNIQUE NOT NULL, inserted_at TIMESTAMP DEFAULT NOW());""")
+                conn.commit()
                 logging.info("Tablas de la base de datos verificadas/creadas.")
         except Exception as e:
             logging.error(f"Error al crear tablas en la base de datos: {e}")
-
-
-        """Crea las tabla processed_messages"""
-        try:
-            with self.conn.cursor() as cur:
-                # Tabla para mensajes procesados
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS processed_messages (
-                        id SERIAL PRIMARY KEY,
-                        mensaje TEXT UNIQUE NOT NULL,
-                        processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                """)
-                
-                # Tabla logsfirewallids (ya está en NodeJS pero la incluyo por seguridad)
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS logsfirewallids (
-                        id SERIAL PRIMARY KEY,
-                        user_id BIGINT,
-                        nombre TEXT,
-                        alias TEXT,
-                        grupo BIGINT,
-                        nombregrupo TEXT,
-                        privado BOOLEAN,
-                        fechareciente TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        ultima_notificacion TIMESTAMP DEFAULT NULL,
-                        notificado BOOLEAN DEFAULT false,
-                        expulsado BOOLEAN DEFAULT false,
-                        biografia TEXT,
-                        chatgpt BOOLEAN DEFAULT false,
-                        mensaje TEXT
-                    );
-                """)
-
-                # Crear tabla para retroalimentación
-                cur.execute('''
-                    CREATE TABLE IF NOT EXISTS feedback (
-                        id SERIAL PRIMARY KEY,
-                        user_id INTEGER NOT NULL,
-                        feedback_type TEXT NOT NULL,
-                        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    )
-                ''')
-                self.conn.commit()
-                logging.info("Tablas de la base de datos verificadas/creadas.")
-
-                # Nueva tabla group_converse
-                cur.execute("""
-                    CREATE TABLE IF NOT EXISTS group_converse (
-                        id SERIAL PRIMARY KEY,
-                        type TEXT,
-                        serial TEXT,
-                        group_id BIGINT UNIQUE NOT NULL,
-                        inserted_at TIMESTAMP DEFAULT NOW()
-                    );
-                """)
-                self.conn.commit()
-        except Exception as e:
-            logging.error(f"Error al crear tablas en la base de datos: {e}")
+        finally:
+            self.put_conn(conn)
 
 
     def add_group(self, group_id, group_type, serial):
@@ -134,9 +74,7 @@ class Database:
         try:
             with conn.cursor() as cur:
                 logging.info(f"Verificando si el grupo {group_id} está registrado en la base de datos")
-                cur.execute("""
-                    SELECT COUNT(*) FROM group_converse WHERE group_id = %s
-                """, (group_id,))
+                cur.execute("SELECT COUNT(*) FROM group_converse WHERE group_id = %s", (group_id,))
                 result = cur.fetchone()
                 logging.info(f"Resultado de la consulta para el grupo {group_id}: {result[0]}")
                 return result[0] > 0
@@ -145,7 +83,7 @@ class Database:
             conn.rollback()
             return False
         finally:
-            self.put_conn(conn)  # Devolver la conexión al pool
+            self.put_conn(conn)
 
 
 
