@@ -49,10 +49,13 @@ class NumerologyModel:
         self.lottery_results = []  # Resultados de loterías extraídos de las fórmulas
         self.max_sequence_length = None  # Longitud máxima de las secuencias para el modelo
         self.current_date = None  # Fecha actual (se actualiza al procesar fórmulas)
+        self.charadas = {}  # Diccionario para almacenar las charadas
         
         # Inicialización de otras variables utilizadas en patrones y predicciones
         self.most_probable_numbers = []  # Números más probables basados en coincidencias de patrones
         self.pattern_matches = {}  # Diccionario para rastrear coincidencias de números en patrones
+        
+
         
         logging.info("Clase NumerologyModel inicializada con todos los atributos necesarios.")
 
@@ -316,6 +319,7 @@ class NumerologyModel:
         self.inseparable_numbers = {}  # Diccionario para números inseparables
         self.delayed_numbers = {}  # Diccionario para números atrasados
         self.lottery_results = []  # Lista para resultados de lotería
+        self.charadas = {}  # Nuevo diccionario para almacenar las charadas
         self.current_date = None  # Variable para la fecha actual
 
         # Función auxiliar para procesar números con 'v'
@@ -582,6 +586,47 @@ class NumerologyModel:
                     matches_found = True
                     continue
 
+                # Regla 16: Formato de Raíz de Número
+                match = re.match(r'^.*?(\d{1,2}v?)\s*\(Raíz del\s*(\d{1,2})\).*?$', line)
+                if match:
+                    root_number = match.group(1)
+                    base_number = match.group(2)
+                    recommended_numbers = [root_number, base_number]
+
+                    # Almacenar en root_numbers y mapping
+                    self.root_numbers.setdefault(base_number, []).extend(recommended_numbers)
+                    self.mapping.setdefault(base_number, []).extend(recommended_numbers)
+                    logging.debug(f"Raíz de número encontrada: {line}")
+                    matches_found = True
+                    continue
+
+                # Regla 17: Formato Charada
+                match = re.match(r'^([A-Z]+)👉([\d\s]+)', line)
+                if match:
+                    charada_name = match.group(1).strip()
+                    numbers_str = match.group(2).strip()
+                    charada_numbers = re.findall(r'\d{1,2}', numbers_str)
+
+                    # Almacenar en el diccionario de charadas
+                    self.charadas.setdefault(charada_name, []).extend(charada_numbers)
+                    logging.debug(f"Charada encontrada: {charada_name} con números: {charada_numbers}")
+                    matches_found = True
+                    continue
+
+                # Regla 18: Charada Amplia
+                match = re.match(r'👉Charada Amplia\s*([A-Z]+)', line)
+                if match:
+                    charada_name = match.group(1).strip()
+                    next_line = next((l for l in lines if l.strip()), "")
+                    charada_amplia_numbers = re.findall(r'\d{1,2}', next_line)
+
+                    # Almacenar en el diccionario de charadas
+                    self.charadas.setdefault(charada_name, []).extend(charada_amplia_numbers)
+                    logging.debug(f"Charada Amplia encontrada: {charada_name} con números: {charada_amplia_numbers}")
+                    matches_found = True
+                    continue
+
+
                 # Si no se encontró ningún patrón y no hay números, pasar a la siguiente línea
                 if not matches_found:
                     logging.debug(f"Ningún patrón encontrado para la línea: {line}")
@@ -609,6 +654,8 @@ class NumerologyModel:
         logging.debug(f"Números inseparables: {self.inseparable_numbers}")
         logging.debug(f"Números atrasados: {self.delayed_numbers}")
         logging.debug(f"Resultados de lotería: {self.lottery_results}")
+        logging.debug(f"Charadas: {self.charadas}")
+        
         return data
 
     # Función auxiliar para convertir abreviaturas de días a nombres completos en español
@@ -768,6 +815,12 @@ class NumerologyModel:
         # Obtener los números inseparables del número de entrada
         inseparable_numbers = self.inseparable_numbers.get(input_number, [])
 
+        # Obtener la charada asociada al número de entrada
+        charada_info = []
+        for charada, numbers in self.charadas.items():
+            if str(input_number) in numbers:
+                charada_info.append(f"{charada}: {' '.join(numbers)}")
+
         # Crear un diccionario para rastrear las coincidencias de los números a través de los patrones
         pattern_matches = {}
         for numbers in self.mapping.values():
@@ -798,45 +851,51 @@ class NumerologyModel:
         unique_recommended_numbers = list(set(recommended_numbers))
         if unique_recommended_numbers:
             message += "🔮 <b>Números recomendados para el número {}</b>:\n".format(input_number)
-            message += '<code>' + ', '.join(unique_recommended_numbers) + '</code>\n\n'
+            message += '<code>' + ' '.join(unique_recommended_numbers) + '</code>\n\n'
 
         # Números inseparables del número de entrada
         if inseparable_numbers:
             message += f"🔗 <b>Números inseparables del {input_number}:</b>\n"
-            message += '<code>' + ', '.join(inseparable_numbers) + '</code>\n\n'
+            message += '<code>' + ' '.join(inseparable_numbers) + '</code>\n\n'
 
         # Raíz del número de entrada
         if root_numbers:
             message += f"🌿 <b>Raíz del número {input_number}:</b>\n"
-            message += '<code>' + ', '.join(root_numbers) + '</code>\n\n'
+            message += '<code>' + ' '.join(root_numbers) + '</code>\n\n'
+
+        # Información de charadas
+        if charada_info:
+            message += f"🎲 <b>Charada para el número {input_number}:</b>\n"
+            message += '<code>' + '\n'.join(charada_info) + '</code>\n\n'
 
         # Números más propensos a salir según las coincidencias de patrones
         if most_probable_numbers:
             message += "🌟 <b>Números más fuertes según patrones:</b>\n"
-            message += '<code>' + ', '.join(most_probable_numbers) + '</code>\n\n'
+            message += '<code>' + ' '.join(most_probable_numbers) + '</code>\n\n'
 
         # Números más atrasados que coinciden con otros patrones
         if delayed_in_patterns:
             message += "⏳ <b>Números más atrasados que coinciden con otros patrones:</b>\n"
-            message += '<code>' + ', '.join(delayed_in_patterns) + '</code>\n\n'
+            message += '<code>' + ' '.join(delayed_in_patterns) + '</code>\n\n'
         else:
             message += "⏳ <b>Números más atrasados:</b>\n"
-            message += '<code>' + ', '.join(most_delayed_numbers) + '</code>\n\n'
+            message += '<code>' + ' '.join(most_delayed_numbers) + '</code>\n\n'
 
         # Vibraciones del día
         if day_numbers:
             message += f"📊 <b>Vibraciones para {day_of_week_es}:</b>\n"
-            message += '<code>' + ', '.join(day_numbers) + '</code>\n\n'
+            message += '<code>' + ' '.join(day_numbers) + '</code>\n\n'
 
         # Dígitos semanales obligatorios
         if day_digits:
             message += f"📅 <b>Dígitos semanales obligatorios para {day_of_week_es}:</b>\n"
-            message += '<code>' + ', '.join(day_digits) + '</code>\n\n'
+            message += '<code>' + ' '.join(day_digits) + '</code>\n\n'
 
-        # Parejas del día
-        if day_parejas:
+        # Parejas del día (solo números con el mismo dígito como 00, 11, 22, ...)
+        valid_parejas = [num for num in day_parejas if num[0] == num[1]]
+        if valid_parejas:
             message += f"🤝 <b>Parejas para {day_of_week_es}:</b>\n"
-            message += '<code>' + ', '.join(day_parejas) + '</code>\n\n'
+            message += '<code>' + ' '.join(valid_parejas) + '</code>\n\n'
 
         # Sección final con firma
         message += "💼 <b>Predicción VIP Personalizada</b> \n"

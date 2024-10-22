@@ -32,31 +32,37 @@ if sys.platform.startswith("win"):
 def load_commands(application, db, numerology_model, conversar_model):
     """Carga automáticamente los archivos de la carpeta 'commands' y los registra como comandos en el bot"""
     commands_dir = 'commands'
-    
+
     for filename in os.listdir(commands_dir):
         if filename.endswith('.py') and not filename.startswith('__'):
             # Remover la extensión .py para importar como módulo
             command_name = filename[:-3]
             module_path = f"{commands_dir}.{command_name}"
             
-            # Cargar el módulo dinámicamente
-            module = importlib.import_module(module_path)
-            
-            # Verificar si el módulo tiene una función con el mismo nombre que el archivo (por convención)
-            if hasattr(module, command_name):
-                command_function = getattr(module, command_name)
-
-                # Agregar 'feedback' a la lista de comandos que solo necesitan `db`
-                if command_name in ['lsgroup', 'addgroup', 'delgroup', 'feedback']:
-                    # Comandos que solo necesitan `db`
-                    application.add_handler(CommandHandler(command_name, partial(command_function, db=db)))
-                else:
-                    # Comandos que necesitan `db`, `model`, y `conversar_model`
-                    application.add_handler(CommandHandler(command_name, partial(command_function, db=db, model=numerology_model, conversar_model=conversar_model)))
+            try:
+                # Cargar el módulo dinámicamente
+                module = importlib.import_module(module_path)
                 
-                logger.info(f"Comando /{command_name} registrado exitosamente.")
-            else:
-                logger.warning(f"El archivo {filename} no tiene una función {command_name}. No se pudo registrar el comando.")
+                # Verificar si el módulo tiene una función con el mismo nombre que el archivo (por convención)
+                if hasattr(module, command_name):
+                    command_function = getattr(module, command_name)
+
+                    # Agregar 'feedback' a la lista de comandos que solo necesitan `db`
+                    if command_name in ['lsgroup', 'addgroup', 'delgroup', 'feedback', 'charada', 'queda']:
+                        # Comandos que solo necesitan `db`
+                        application.add_handler(CommandHandler(command_name, partial(command_function, db=db)))
+                    else:
+                        # Comandos que necesitan `db`, `model`, y `conversar_model`
+                        application.add_handler(CommandHandler(command_name, partial(command_function, db=db, model=numerology_model, conversar_model=conversar_model)))
+
+                    logger.info(f"Comando /{command_name} registrado exitosamente.")
+                else:
+                    logger.warning(f"El archivo {filename} no tiene una función '{command_name}'. No se pudo registrar el comando.")
+            
+            except ImportError as e:
+                logger.error(f"Error al importar el módulo {module_path}: {e}", exc_info=True)
+            except Exception as e:
+                logger.error(f"Error al registrar el comando /{command_name} del archivo {filename}: {e}", exc_info=True)
 
 
 def register_message_handler(application, db, conversar_model, numerology_model):

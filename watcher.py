@@ -30,6 +30,8 @@ class MyHandler(FileSystemEventHandler):
 
     def on_modified(self, event):
         # Reinicia si alguno de los archivos importantes es modificado
+        if event.is_directory:
+            return  # Ignorar cambios en directorios
         if any(event.src_path.endswith(file) for file in self.files_to_watch):
             print(f'{event.src_path} modificado. Reiniciando {self.script_name}...')
             self.restart_script()
@@ -51,16 +53,20 @@ if __name__ == "__main__":
     # Agregar archivos de la carpeta commands
     commands_directory = './commands'
     if os.path.exists(commands_directory):
-        # Listar todos los archivos en la carpeta commands
+        # Listar todos los archivos .py directamente en la carpeta commands (sin subcarpetas)
         for filename in os.listdir(commands_directory):
             if filename.endswith('.py'):  # Solo monitorear archivos Python
                 files_to_watch.append(os.path.join(commands_directory, filename))
 
+    # Crear un event handler para monitorear cambios
     event_handler = MyHandler(script_name, files_to_watch)
     observer = Observer()
-    observer.schedule(event_handler, path, recursive=True)
 
-    print(f'Observando cambios en {path} para los archivos: {", ".join(files_to_watch)}...')
+    # Monitorear el directorio actual ('.') y la carpeta commands sin subcarpetas (no recursive)
+    observer.schedule(event_handler, path, recursive=False)
+    observer.schedule(event_handler, commands_directory, recursive=False)
+
+    print(f'Observando cambios en {path} y {commands_directory} para los archivos: {", ".join(files_to_watch)}...')
     observer.start()
 
     try:

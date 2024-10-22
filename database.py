@@ -24,6 +24,24 @@ class Database:
         """Crea las tablas necesarias si no existen"""
         try:
             with self.conn.cursor() as cur:
+                # Crear la tabla de charadas con la restricción UNIQUE en la columna numero
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS charadas (
+                        id SERIAL PRIMARY KEY,
+                        numero INTEGER NOT NULL,
+                        significado TEXT NOT NULL,
+                        UNIQUE(numero, significado)  -- Agregar restricción única en número y significado
+                    );
+                """)
+                self.conn.commit()
+                logging.info("Tablas de la base de datos verificadas/creadas.")
+        except Exception as e:
+            logging.error(f"Error al crear tablas en la base de datos: {e}")
+
+
+        """Crea las tabla processed_messages"""
+        try:
+            with self.conn.cursor() as cur:
                 # Tabla para mensajes procesados
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS processed_messages (
@@ -111,9 +129,6 @@ class Database:
             logging.error(f"Error verificando el grupo: {e}")
             return False
 
-
-
-        
     def delete_group(self, group_id):
         """
         Elimina un grupo de la tabla group_converse basado en el group_id.
@@ -259,3 +274,86 @@ class Database:
         except Exception as e:
             logging.error(f"Error al guardar retroalimentación en la base de datos: {e}")
             raise e
+
+    def add_charada(self, numero, significado):
+        """Añade o actualiza el significado de un número en la tabla charada."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO charada (numero, significado) 
+                    VALUES (%s, %s) 
+                    ON CONFLICT (numero) DO UPDATE SET significado = EXCLUDED.significado
+                """, (numero, significado))
+                self.conn.commit()
+                logging.info(f"Charada para el número {numero} añadida/actualizada exitosamente.")
+        except Exception as e:
+            logging.error(f"Error al guardar la charada: {e}")
+
+    def get_charada_by_numero(self, numero):
+        """Obtiene el significado de un número específico en la tabla charada."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT significado FROM charada WHERE numero = %s", (numero,))
+                result = cur.fetchone()
+                if result:
+                    return result[0]  # Retorna el significado
+                else:
+                    return None
+        except Exception as e:
+            logging.error(f"Error al obtener charada para el número {numero}: {e}")
+            return None
+
+    def get_charada_by_keyword(self, keyword):
+        """Obtiene todos los números relacionados con una palabra clave en la tabla charada."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("SELECT numero FROM charada WHERE significado ILIKE %s", (f"%{keyword}%",))
+                result = cur.fetchall()
+                return [row[0] for row in result]
+        except Exception as e:
+            logging.error(f"Error al obtener charadas por palabra clave '{keyword}': {e}")
+            return []
+
+    def get_significado_por_numero(self, numero):
+        """Obtiene los significados asociados a un número en la charada."""
+        with self.conn.cursor() as cur:
+            cur.execute("SELECT significado FROM charada WHERE numero = %s", (numero,))
+            resultado = cur.fetchone()
+            if resultado:
+                return resultado[0].split(',')  # Retorna los significados como una lista
+            return None
+
+    def buscar_numeros_por_significado(self, palabra_clave):
+        """Busca todos los números en los que aparece una palabra en los significados."""
+        with self.conn.cursor() as cur:
+            cur.execute("""
+                SELECT numero, significado 
+                FROM charada 
+                WHERE significado ILIKE %s
+            """, (f"%{palabra_clave}%",))
+            resultados = cur.fetchall()
+            if resultados:
+                return [(numero, significado.split(',')) for numero, significado in resultados]
+            return None
+
+
+    def actualizar_charada(self, numero, significados_nuevos):
+        """Actualiza o inserta significados en la charada para un número dado."""
+        with self.conn.cursor() as cur:
+            # Obtener los significados actuales
+            cur.execute("SELECT significado FROM charada WHERE numero = %s", (numero,))
+            result = cur.fetchone()
+
+            if result:
+                # Actualizar el significado si ya existe
+                significados_existentes = result[0].split(',')
+                nuevos_significados = list(set(significados_existentes + significados_nuevos))
+                cur.execute("UPDATE charada SET significado = %s WHERE numero = %s", (','.join(nuevos_significados), numero))
+                logging.info(f"Actualizados significados para el número {numero}: {nuevos_significados}")
+            else:
+                # Insertar nuevo número y significado si no existe
+                cur.execute("INSERT INTO charada (numero, significado) VALUES (%s, %s)", (numero, ','.join(significados_nuevos)))
+                logging.info(f"Insertado número {numero} con significados: {significados_nuevos}")
+            
+            self.conn.commit()
+
