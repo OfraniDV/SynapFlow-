@@ -40,3 +40,4 @@ build/
 # Archivos de modelo y datos generados que no deberían subirse
 *.pkl
 *.keras
+*.log

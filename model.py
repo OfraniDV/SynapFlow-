@@ -120,7 +120,7 @@ class NumerologyModel:
             self.model = tf.keras.models.load_model(model_file)
 
             # Cargar el MultiLabelBinarizer
-            mlb_path = 'mlb.pkl'
+            mlb_path = 'mlb_numerologia.pkl'
             if os.path.exists(mlb_path):
                 with open(mlb_path, 'rb') as mlb_file:
                     self.mlb = pickle.load(mlb_file)
@@ -131,7 +131,7 @@ class NumerologyModel:
                 return
 
             # Cargar la longitud máxima de secuencias
-            seq_length_path = 'max_sequence_length.pkl'
+            seq_length_path = 'max_sequence_length_numerologia.pkl'
             if os.path.exists(seq_length_path):
                 with open(seq_length_path, 'rb') as seq_file:
                     self.max_sequence_length = pickle.load(seq_file)
@@ -155,26 +155,28 @@ class NumerologyModel:
             logging.info("Modelo de numerología cargado exitosamente.")
 
             # Aplicar ajustes finos si existen suficientes datos
-            ajuste_fino_path = 'ajuste_fino_datos.pkl'
-            if os.path.exists(ajuste_fino_path):
-                logging.info("Aplicando ajustes finos guardados.")
-                self.aplicar_ajustes_finos(ajuste_fino_path)
+            logging.info("Aplicando ajustes finos guardados.")
+            self.aplicar_ajustes_finos()
 
         except Exception as e:
             logging.error(f"Error al cargar el modelo de numerología: {e}")
             self.is_trained = False
 
-    def aplicar_ajustes_finos(self, ajuste_fino_path):
+
+    def aplicar_ajustes_finos(self):
         """Aplica los ajustes finos guardados al modelo basado en las fórmulas extraídas."""
         try:
+            ajuste_fino_path = 'ajuste_fino_datos_numerologia.pkl'
             # Cargar los datos para el ajuste fino
             datos_para_ajuste = []
-            with open(ajuste_fino_path, 'rb') as f:
-                while True:
-                    try:
-                        datos_para_ajuste.append(pickle.load(f))
-                    except EOFError:
-                        break
+            if os.path.exists(ajuste_fino_path):
+                with open(ajuste_fino_path, 'rb') as f:
+                    while True:
+                        try:
+                            data = pickle.load(f)
+                            datos_para_ajuste.append(data)
+                        except EOFError:
+                            break
 
             # Asegurarse de que los datos para ajuste fino están basados en las fórmulas extraídas
             if len(self.mapping) == 0 or len(self.vibrations_by_day) == 0:
@@ -723,90 +725,111 @@ class NumerologyModel:
         return mapping.get(abbr, abbr)  # Retorna la abreviatura si no se encuentra en el diccionario
 
     def train(self):
+        """Entrena el modelo de numerología utilizando los datos preparados."""
         try:
+            logging.info("===== [NumerologyModel] Iniciando el entrenamiento del modelo de numerología =====")
+
             # Preparar los datos
-            logging.info("Iniciando la preparación de los datos...")
+            logging.info("[NumerologyModel] Preparando los datos para el entrenamiento...")
             self.prepare_data()
 
             # Verificar que los datos de entrada y las etiquetas existen
             if not hasattr(self, 'X') or not hasattr(self, 'y'):
-                logging.error("Los datos de entrenamiento no están disponibles. Asegúrate de que los datos fueron cargados correctamente.")
+                logging.error("[NumerologyModel] Los datos de entrenamiento no están disponibles. Asegúrate de que los datos fueron cargados correctamente.")
                 self.is_trained = False
                 return
 
             if self.X.size == 0 or len(self.y) == 0:
-                logging.error("No hay datos suficientes para entrenar el modelo. X o y están vacíos.")
+                logging.error("[NumerologyModel] No hay datos suficientes para entrenar el modelo. X o y están vacíos.")
                 self.is_trained = False
                 return
 
-            # Incorporar vibraciones y otros datos en las características usando la nueva función generate_features
-            logging.info("Incorporando vibraciones y otros datos en las características...")
+            # Incorporar vibraciones y otros datos en las características usando la función generate_features
+            logging.info("[NumerologyModel] Incorporando vibraciones y otros datos en las características...")
             X_features = [self.generate_features(int(input_number)) for input_number in self.X.flatten()]
 
             # Verificar que X_features no esté vacío antes de calcular max_sequence_length
             if not X_features or len(X_features) == 0:
-                logging.error("X_features está vacío o no tiene datos válidos.")
+                logging.error("[NumerologyModel] X_features está vacío o no tiene datos válidos.")
                 self.is_trained = False
                 return
 
             # Guardar la longitud máxima de secuencia
             self.max_sequence_length = max(len(seq) for seq in X_features)
-            logging.info(f"Longitud máxima de secuencia establecida en: {self.max_sequence_length}")
+            logging.info(f"[NumerologyModel] Longitud máxima de secuencia establecida en: {self.max_sequence_length}")
 
             # Verificar que max_sequence_length sea válida
             if not isinstance(self.max_sequence_length, int) or self.max_sequence_length <= 0:
-                logging.error(f"max_sequence_length no es válido: {self.max_sequence_length}")
+                logging.error(f"[NumerologyModel] max_sequence_length no es válido: {self.max_sequence_length}")
                 self.is_trained = False
                 return
 
             # Convertir a matriz numpy con padding
             X_train = pad_sequences(X_features, padding='post', dtype='int32', maxlen=self.max_sequence_length)
-            logging.info(f"Forma final de X_train después del padding: {X_train.shape}")
+            logging.info(f"[NumerologyModel] Forma final de X_train después del padding: {X_train.shape}")
 
             # Preprocesar las etiquetas con MultiLabelBinarizer
             self.mlb = MultiLabelBinarizer()
             y_binarized = self.mlb.fit_transform(self.y)
-            logging.info(f"Forma de y_binarized después de aplicar MultiLabelBinarizer: {y_binarized.shape}")
+            logging.info(f"[NumerologyModel] Forma de y_binarized después de aplicar MultiLabelBinarizer: {y_binarized.shape}")
 
             # Verificar si hay valores NaN o Inf
             if np.isnan(X_train).any() or np.isinf(X_train).any():
-                logging.error("X_train contiene valores NaN o Inf. No se puede continuar con el entrenamiento.")
+                logging.error("[NumerologyModel] X_train contiene valores NaN o Inf. No se puede continuar con el entrenamiento.")
                 self.is_trained = False
                 return
 
             if np.isnan(y_binarized).any() or np.isinf(y_binarized).any():
-                logging.error("y_binarized contiene valores NaN o Inf. No se puede continuar con el entrenamiento.")
+                logging.error("[NumerologyModel] y_binarized contiene valores NaN o Inf. No se puede continuar con el entrenamiento.")
                 self.is_trained = False
                 return
 
             num_classes = y_binarized.shape[1]  # Número de clases únicas en las etiquetas
-            logging.info(f"Número de clases en y_binarized: {num_classes}")
+            logging.info(f"[NumerologyModel] Número de clases en y_binarized: {num_classes}")
 
-            # Definir el modelo de red neuronal para secuencias
+            # Definir el modelo de red neuronal para secuencias con una arquitectura mejorada
             max_input_value = np.max(X_train) + 1  # Valor máximo de entrada para la capa Embedding
-            logging.info(f"El valor máximo de entrada para la capa Embedding será: {max_input_value}")
+            logging.info(f"[NumerologyModel] El valor máximo de entrada para la capa Embedding será: {max_input_value}")
 
-            # Definir la arquitectura del modelo
+            # Definir la arquitectura del modelo mejorada
             self.model = Sequential()
-            self.model.add(Embedding(input_dim=max_input_value, output_dim=64))
-            self.model.add(LSTM(64))
+            self.model.add(Embedding(input_dim=max_input_value, output_dim=128))
+            self.model.add(Bidirectional(LSTM(128, return_sequences=True)))
+            self.model.add(Dropout(0.3))
+            self.model.add(Bidirectional(LSTM(64)))
+            self.model.add(Dropout(0.3))
             self.model.add(Dense(num_classes, activation='sigmoid'))
 
             # Compilar el modelo
-            logging.info("Compilando el modelo...")
+            logging.info("[NumerologyModel] Compilando el modelo...")
             self.model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
 
             # Entrenar el modelo
-            logging.info("Entrenando el modelo...")
+            logging.info("[NumerologyModel] Entrenando el modelo de numerología...")
             self.model.fit(X_train, y_binarized, epochs=10, batch_size=10, verbose=1)
+
+            # Guardar el modelo entrenado
+            self.model.save('numerology_model.keras')
+            logging.info("[NumerologyModel] Modelo de numerología entrenado y guardado exitosamente.")
+
+            # Guardar el MultiLabelBinarizer
+            with open('mlb_numerologia.pkl', 'wb') as mlb_file:
+                pickle.dump(self.mlb, mlb_file)
+            logging.info("[NumerologyModel] MultiLabelBinarizer guardado en 'mlb_numerologia.pkl'.")
+
+            # Guardar la longitud máxima de secuencias
+            with open('max_sequence_length_numerologia.pkl', 'wb') as seq_file:
+                pickle.dump(self.max_sequence_length, seq_file)
+            logging.info("[NumerologyModel] Longitud máxima de secuencias guardada en 'max_sequence_length_numerologia.pkl'.")
 
             # Indicar que el modelo fue entrenado correctamente
             self.is_trained = True
-            logging.info("Modelo entrenado exitosamente con red neuronal.")
+            logging.info("[NumerologyModel] Modelo de numerología entrenado exitosamente.")
 
         except Exception as e:
-            logging.error(f"Error durante el entrenamiento del modelo: {e}")
+            logging.error(f"[NumerologyModel] Error durante el entrenamiento del modelo: {e}")
             self.is_trained = False
+
 
     def predict(self, input_number):
         # Usar mapeo directo si existe
@@ -956,17 +979,17 @@ class NumerologyModel:
 
     def get_vibrations_for_day(self, day_of_week_es):
         try:
-            # Aquí deberías realizar la consulta a la base de datos
-            # para obtener las vibraciones del día en cuestión.
-            vibrations = self.db.get_vibrations_by_day(day_of_week_es)
+            # Obtener las vibraciones del día desde self.vibrations_by_day
+            vibrations = self.vibrations_by_day.get(day_of_week_es, {})
             if not vibrations:
-                #logging.warning(f"No se encontraron vibraciones para el día {day_of_week_es}.")
-                return []
-            #logging.info(f"Vibraciones encontradas para {day_of_week_es}: {vibrations}")
+                logging.warning(f"No se encontraron vibraciones para el día {day_of_week_es}.")
+                return {}
+            logging.info(f"Vibraciones encontradas para {day_of_week_es}: {vibrations}")
             return vibrations
         except Exception as e:
-            #logging.error(f"Error al obtener las vibraciones para el día {day_of_week_es}: {e}")
-            return []
+            logging.error(f"Error al obtener las vibraciones para el día {day_of_week_es}: {e}")
+            return {}
+
 
     def get_day_in_spanish(self, day_in_english):
         days_mapping = {
@@ -1278,25 +1301,25 @@ class Conversar:
             return []
 
     def realizar_ajuste_fino(self, epochs=2):
-        logger.info("Iniciando el ajuste fino del modelo conversacional.")
+        logger.info("[Conversar] Iniciando el ajuste fino del modelo conversacional.")
 
         try:
             # Preparar los datos
             data_prepared = self.prepare_data()
             if not data_prepared:
-                logger.error("Error en la preparación de datos. No se puede realizar el ajuste fino.")
+                logger.error("[Conversar] Error en la preparación de datos. No se puede realizar el ajuste fino.")
                 return
 
             # Asegurarse de que el modelo está construido
             if self.model is None:
-                logger.info("El modelo no está construido. Construyendo el modelo...")
+                logger.info("[Conversar] El modelo no está construido. Construyendo el modelo...")
                 self.build_model()
 
             # Expandir la dimensión de las etiquetas para sparse_categorical_crossentropy
             decoder_target_data = np.expand_dims(self.decoder_target_data, -1)
 
             # Entrenar el modelo
-            logger.info(f"Entrenando el modelo local con {len(self.encoder_input_data)} ejemplos para ajuste fino.")
+            logger.info(f"[Conversar] Entrenando el modelo local con {len(self.encoder_input_data)} ejemplos para ajuste fino.")
 
             self.model.fit(
                 [self.encoder_input_data, self.decoder_input_data],
@@ -1306,15 +1329,16 @@ class Conversar:
                 validation_split=0.2
             )
 
-            logger.info("Ajuste fino del modelo local completado con éxito.")
+            logger.info("[Conversar] Ajuste fino del modelo local completado con éxito.")
             self.is_trained = True
 
             # Actualizar los modelos de inferencia después del ajuste fino
-            logger.info("Actualizando los modelos de inferencia después del ajuste fino.")
+            logger.info("[Conversar] Actualizando los modelos de inferencia después del ajuste fino.")
             self.setup_inference_models()
 
         except Exception as e:
-            logger.error(f"Error durante el ajuste fino del modelo Conversar: {e}")
+            logger.error(f"[Conversar] Error durante el ajuste fino del modelo Conversar: {e}")
+
 
 
     def model_generate_response(self, input_text):
@@ -1406,46 +1430,44 @@ class Conversar:
         logger.info(f"Respuesta post-procesada: {response}")
         return response
 
-    def build_model(self, learning_rate=0.0001):
-        """
-        Construye e inicializa el modelo Encoder-Decoder para generación de texto.
-
-        Args:
-            learning_rate (float): Tasa de aprendizaje para el optimizador Adam.
-        """
-        logging.info("Inicializando el modelo Encoder-Decoder...")
-
+    def build_model(self):
+        """Construye el modelo Encoder-Decoder para el entrenamiento."""
         try:
-            if not self.num_words or not self.max_sequence_length:
-                raise ValueError("Los parámetros 'num_words' o 'max_sequence_length' no están definidos correctamente.")
+            logger.info("[Conversar] Construyendo el modelo Encoder-Decoder...")
+
+            # Tamaño del vocabulario y dimensiones
+            vocab_size = len(self.tokenizer.word_index) + 1
+            embedding_dim = 256
+            latent_dim = 256
 
             # Encoder
-            encoder_inputs = Input(shape=(self.max_sequence_length,), name='encoder_inputs')
-            encoder_embedding = Embedding(input_dim=self.num_words, output_dim=256, name='encoder_embedding')(encoder_inputs)
-            encoder_lstm = LSTM(256, return_state=True, name='encoder_lstm')
-            _, state_h, state_c = encoder_lstm(encoder_embedding)
+            encoder_inputs = Input(shape=(None,), name='encoder_inputs')
+            enc_emb = Embedding(input_dim=vocab_size, output_dim=embedding_dim, mask_zero=True, name='encoder_embedding')(encoder_inputs)
+            encoder_outputs, state_h, state_c = LSTM(latent_dim, return_state=True, name='encoder_lstm')(enc_emb)
             encoder_states = [state_h, state_c]
 
             # Decoder
-            decoder_inputs = Input(shape=(self.max_sequence_length,), name='decoder_inputs')
-            decoder_embedding = Embedding(input_dim=self.num_words, output_dim=256, name='decoder_embedding')(decoder_inputs)
-            decoder_lstm = LSTM(256, return_sequences=True, return_state=True, name='decoder_lstm')
-            decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
-            decoder_dense = Dense(self.num_words, activation='softmax', name='decoder_dense')
+            decoder_inputs = Input(shape=(None,), name='decoder_inputs')
+            dec_emb = Embedding(input_dim=vocab_size, output_dim=embedding_dim, mask_zero=True, name='decoder_embedding')(decoder_inputs)
+            decoder_lstm = LSTM(latent_dim, return_sequences=True, return_state=True, name='decoder_lstm')
+            decoder_outputs, _, _ = decoder_lstm(dec_emb, initial_state=encoder_states)
+
+            # Capa de salida
+            decoder_dense = Dense(vocab_size, activation='softmax', name='decoder_dense')
             decoder_outputs = decoder_dense(decoder_outputs)
 
             # Modelo de entrenamiento
-            self.model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
-            logging.info("Modelo Encoder-Decoder construido exitosamente.")
+            self.model = Model([encoder_inputs, decoder_inputs], decoder_outputs, name='training_model')
 
             # Compilar el modelo
-            optimizer = Adam(learning_rate=learning_rate)
-            self.model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-            logging.info("Modelo compilado con optimizador Adam y función de pérdida sparse_categorical_crossentropy.")
+            self.model.compile(optimizer='rmsprop', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+
+            logger.info("[Conversar] Modelo Encoder-Decoder construido y compilado exitosamente.")
 
         except Exception as e:
-            logging.error(f"Error al construir el modelo Encoder-Decoder: {e}")
-            raise e
+            logger.error(f"[Conversar] Error al construir el modelo: {e}")
+            self.model = None
+
 
     def prepare_data(self):
         """Prepara los datos para el modelo Encoder-Decoder."""
@@ -1613,22 +1635,24 @@ class Conversar:
             return None, None
 
     def train(self, epochs=10, batch_size=64, validation_split=0.2):
-        """Entrena el modelo Encoder-Decoder."""
+        """Entrena el modelo conversacional Encoder-Decoder."""
         try:
+            logging.info("===== [Conversar] Iniciando el entrenamiento del modelo conversacional =====")
+
             # Preparar los datos
-            logging.info("Preparando los datos para el entrenamiento del modelo Encoder-Decoder...")
+            logging.info("[Conversar] Preparando los datos para el entrenamiento del modelo Encoder-Decoder...")
             data_prepared = self.prepare_data()
             if not data_prepared:
-                logging.error("Error en la preparación de datos. Abortando entrenamiento.")
+                logging.error("[Conversar] Error en la preparación de datos. Abortando entrenamiento.")
                 return
 
             # Asegurarse de que el modelo está construido
             if self.model is None:
-                logging.info("El modelo no está construido. Construyendo el modelo...")
+                logging.info("[Conversar] El modelo no está construido. Construyendo el modelo...")
                 self.build_model()
 
             # Iniciar el entrenamiento
-            logging.info(f"Iniciando el entrenamiento del modelo con {epochs} épocas y batch_size de {batch_size}.")
+            logging.info(f"[Conversar] Iniciando el entrenamiento del modelo con {epochs} épocas y batch_size de {batch_size}.")
 
             # Las etiquetas deben ser expandidas para que tengan una dimensión adicional
             decoder_target_data = np.expand_dims(self.decoder_target_data, -1)
@@ -1642,15 +1666,16 @@ class Conversar:
                 validation_split=validation_split
             )
 
-            logging.info("Entrenamiento completado con éxito.")
+            logging.info("[Conversar] Entrenamiento completado con éxito.")
 
             # Marcar el modelo como entrenado
             self.is_trained = True
-            logging.info("El modelo ha sido marcado como entrenado.")
+            logging.info("[Conversar] El modelo ha sido marcado como entrenado.")
 
         except Exception as e:
-            logging.error(f"Error durante el entrenamiento del modelo: {e}")
+            logging.error(f"[Conversar] Error durante el entrenamiento del modelo: {e}")
             self.is_trained = False
+
 
     def setup_inference_models(self):
         """Configura los modelos de inferencia para la generación de respuestas."""
@@ -1677,4 +1702,3 @@ class Conversar:
         self.decoder_model = Model(
             [decoder_inputs] + decoder_states_inputs,
             [decoder_outputs] + decoder_states)
-
