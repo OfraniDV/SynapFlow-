@@ -20,6 +20,22 @@ class Database:
         # Crear las tablas si no existen
         self.create_tables()
 
+
+    def get_conn(self):
+        return self.connection_pool.getconn()
+
+    def put_conn(self, conn):
+        self.connection_pool.putconn(conn)
+
+    def close_connection(self):
+        """Cierra la conexión a la base de datos"""
+        try:
+            if self.conn:
+                self.conn.close()
+                logging.info("Conexión a la base de datos cerrada correctamente.")
+        except Exception as e:
+            logging.error(f"Error al cerrar la conexión de la base de datos: {e}")
+
     def create_tables(self):
         """Crea las tablas necesarias si no existen"""
         try:
@@ -114,9 +130,9 @@ class Database:
 
 
     def is_group_registered(self, group_id):
-        """Verifica si un grupo ya está registrado en la base de datos"""
+        conn = self.get_conn()  # Obtener conexión del pool
         try:
-            with self.conn.cursor() as cur:
+            with conn.cursor() as cur:
                 logging.info(f"Verificando si el grupo {group_id} está registrado en la base de datos")
                 cur.execute("""
                     SELECT COUNT(*) FROM group_converse WHERE group_id = %s
@@ -125,9 +141,12 @@ class Database:
                 logging.info(f"Resultado de la consulta para el grupo {group_id}: {result[0]}")
                 return result[0] > 0
         except Exception as e:
-            self.conn.rollback()  # Si ocurre un error, hacemos rollback
             logging.error(f"Error verificando el grupo: {e}")
+            conn.rollback()
             return False
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
 
 
     def delete_group(self, group_id):
@@ -357,4 +376,3 @@ class Database:
                 logging.info(f"Insertado número {numero} con significados: {significados_nuevos}")
             
             self.conn.commit()
-
