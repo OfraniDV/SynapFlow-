@@ -134,10 +134,10 @@ def register_message_handler(application, db, conversar_model, numerology_model)
     """Registra el MessageHandler para manejar mensajes de texto generales"""
     from commands.handle_message import handle_message
     
-    # Registrar el handler de mensajes, sin pasar db y los modelos si ya están inicializados en handle_message.py
+    # Utilizamos partial para pasar los modelos y db como argumentos adicionales
     message_handler = MessageHandler(
         filters.TEXT & ~filters.COMMAND, 
-        handle_message  # Llamamos directamente a handle_message sin parámetros adicionales
+        partial(handle_message, numerology_model=numerology_model, conversar_model=conversar_model, db=db)  # Usamos partial para pasar los argumentos
     )
     
     application.add_handler(message_handler)
