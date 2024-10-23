@@ -1382,17 +1382,19 @@ class Conversar:
         input_seq = self.tokenizer.texts_to_sequences([self.clean_text(input_text)])
         input_seq = pad_sequences(input_seq, maxlen=self.max_encoder_seq_length, padding='post')
 
-        # Obtener los estados del encoder
-        states_value = self.encoder_model.predict(input_seq)
+        # Obtener las salidas y estados del encoder
+        encoder_outputs, state_h, state_c = self.encoder_model.predict(input_seq)
 
-        # Generar la respuesta palabra por palabra
+        # Inicializar la secuencia del decoder
         target_seq = np.array([[self.tokenizer.word_index.get('<start>', 1)]])
 
         stop_condition = False
         decoded_sentence = ''
 
         while not stop_condition:
-            output_tokens, h, c = self.decoder_model.predict([target_seq] + states_value)
+            output_tokens, h, c = self.decoder_model.predict(
+                [target_seq, encoder_outputs, state_h, state_c]
+            )
 
             # Obtener la palabra más probable
             sampled_token_index = np.argmax(output_tokens[0, -1, :])
@@ -1407,9 +1409,10 @@ class Conversar:
             target_seq = np.array([[sampled_token_index]])
 
             # Actualizar los estados
-            states_value = [h, c]
+            state_h, state_c = h, c
 
         return decoded_sentence.strip()
+
 
 
     
@@ -1461,41 +1464,86 @@ class Conversar:
         return response
 
     def build_model(self):
-        """Construye el modelo Encoder-Decoder para el entrenamiento."""
+        """Construye el modelo Encoder-Decoder mejorado con mecanismo de atención."""
         try:
-            logging.info("[Conversar] Construyendo el modelo Encoder-Decoder...")
+            logging.info("[Conversar] Construyendo el modelo Encoder-Decoder mejorado con atención...")
 
             # Tamaño del vocabulario y dimensiones
             vocab_size = len(self.tokenizer.word_index) + 1
-            embedding_dim = 256
-            latent_dim = self.latent_dim
+            embedding_dim = 256  # Puedes ajustar este valor
+            latent_dim = 512     # Aumentamos el tamaño de la capa LSTM
 
-            # Encoder
+            logging.info(f"[Conversar] Tamaño del vocabulario: {vocab_size}")
+            logging.info(f"[Conversar] Dimensión de embedding: {embedding_dim}")
+            logging.info(f"[Conversar] Dimensión latente (LSTM units): {latent_dim}")
+
+            # ENCODER
+            # Entrada del encoder
             encoder_inputs = Input(shape=(None,), name='encoder_inputs')
-            encoder_embedding = Embedding(input_dim=vocab_size, output_dim=embedding_dim, mask_zero=True, name='encoder_embedding')(encoder_inputs)
-            encoder_lstm = LSTM(latent_dim, return_state=True, name='encoder_lstm')
-            encoder_outputs, state_h_enc, state_c_enc = encoder_lstm(encoder_embedding)
-            encoder_states = [state_h_enc, state_c_enc]
+            logging.info("[Conversar] Encoder inputs creado.")
 
-            # Decoder
+            # Capa de embedding del encoder
+            encoder_embedding = Embedding(input_dim=vocab_size, output_dim=embedding_dim, mask_zero=True, name='encoder_embedding')(encoder_inputs)
+            logging.info("[Conversar] Encoder embedding creado.")
+
+            # Capa LSTM bidireccional del encoder
+            encoder_lstm = Bidirectional(LSTM(latent_dim, return_sequences=True, return_state=True, name='encoder_lstm'))
+            encoder_outputs, forward_h, forward_c, backward_h, backward_c = encoder_lstm(encoder_embedding)
+            logging.info("[Conversar] Encoder LSTM bidireccional creado.")
+
+            # Concatenar los estados hacia adelante y hacia atrás
+            state_h = Concatenate()([forward_h, backward_h])
+            state_c = Concatenate()([forward_c, backward_c])
+            encoder_states = [state_h, state_c]
+            logging.info("[Conversar] Estados del encoder concatenados.")
+
+            # DECODER
+            # Entrada del decoder
             decoder_inputs = Input(shape=(None,), name='decoder_inputs')
+            logging.info("[Conversar] Decoder inputs creado.")
+
+            # Capa de embedding del decoder
             decoder_embedding = Embedding(input_dim=vocab_size, output_dim=embedding_dim, mask_zero=True, name='decoder_embedding')(decoder_inputs)
-            decoder_lstm = LSTM(latent_dim, return_sequences=True, return_state=True, name='decoder_lstm')
+            logging.info("[Conversar] Decoder embedding creado.")
+
+            # Capa LSTM del decoder
+            decoder_lstm = LSTM(latent_dim * 2, return_sequences=True, return_state=True, name='decoder_lstm')
             decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
+            logging.info("[Conversar] Decoder LSTM creado.")
+
+            # MECANISMO DE ATENCIÓN
+            # Aplicar atención entre las salidas del decoder y las salidas del encoder
+            attn_layer = tf.keras.layers.Attention(name='attention_layer')
+            attn_out = attn_layer([decoder_outputs, encoder_outputs])
+            logging.info("[Conversar] Mecanismo de atención aplicado.")
+
+            # Concatenar la salida del decoder y el contexto de atención
+            decoder_concat_input = Concatenate(axis=-1, name='concat_layer')([decoder_outputs, attn_out])
+            logging.info("[Conversar] Salidas del decoder y atención concatenadas.")
+
+            # Capa densa final para generar la predicción de la siguiente palabra
             decoder_dense = Dense(vocab_size, activation='softmax', name='decoder_dense')
-            decoder_outputs = decoder_dense(decoder_outputs)
+            decoder_outputs = decoder_dense(decoder_concat_input)
+            logging.info("[Conversar] Capa densa del decoder creada.")
 
             # Modelo de entrenamiento
             self.model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+            logging.info("[Conversar] Modelo de entrenamiento creado.")
 
             # Compilar el modelo
-            self.model.compile(optimizer='rmsprop', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+            self.model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+            logging.info("[Conversar] Modelo compilado exitosamente.")
 
-            logging.info("[Conversar] Modelo Encoder-Decoder construido y compilado exitosamente.")
+            # Configurar los modelos de inferencia
+            self.setup_inference_models()
+            logging.info("[Conversar] Modelos de inferencia configurados.")
+
+            logging.info("[Conversar] Modelo Encoder-Decoder mejorado construido y compilado exitosamente.")
 
         except Exception as e:
             logging.error(f"[Conversar] Error al construir el modelo: {e}")
             self.model = None
+
 
 
     def guardar_modelo(self):
@@ -1751,47 +1799,54 @@ class Conversar:
     def setup_inference_models(self):
         """Configura los modelos de inferencia para el Encoder y el Decoder."""
         try:
-            # Obtener las entradas del encoder
-            logging.info("Obteniendo las entradas y estados del encoder")
-            encoder_inputs = self.model.input[0]  # Entrada del encoder
-            encoder_outputs, state_h_enc, state_c_enc = self.model.get_layer('encoder_lstm').output
+            # Dimensión latente ajustada (el doble por la LSTM bidireccional)
+            latent_dim = 512
+            decoder_latent_dim = latent_dim * 2
+
+            # Encoder - Modelo de inferencia
+            encoder_inputs = self.model.input[0]  # Entrada del encoder en el modelo de entrenamiento
+            encoder_embedding = self.model.get_layer('encoder_embedding')(encoder_inputs)
+            encoder_outputs, forward_h, forward_c, backward_h, backward_c = self.model.get_layer('encoder_lstm')(encoder_embedding)
+            state_h_enc = Concatenate()([forward_h, backward_h])
+            state_c_enc = Concatenate()([forward_c, backward_c])
             encoder_states = [state_h_enc, state_c_enc]
+            self.encoder_model = Model(encoder_inputs, [encoder_outputs] + encoder_states)
+            logging.info("[Conversar] Modelo de inferencia del encoder configurado.")
 
-            # Definir el modelo del encoder para inferencia
-            self.encoder_model = tf.keras.Model(encoder_inputs, encoder_states)
+            # Decoder - Modelo de inferencia
+            decoder_inputs = self.model.input[1]  # Entrada del decoder en el modelo de entrenamiento
+            decoder_state_input_h = Input(shape=(decoder_latent_dim,), name='decoder_state_input_h')
+            decoder_state_input_c = Input(shape=(decoder_latent_dim,), name='decoder_state_input_c')
+            decoder_hidden_state_input = Input(shape=(None, latent_dim * 2), name='decoder_hidden_state_input')
 
-            # Configuración del decoder para inferencia
-            logging.info("Obteniendo las entradas del decoder")
-            decoder_inputs = self.model.input[1]  # Entrada del decoder
+            # Embedding
+            decoder_embedding = self.model.get_layer('decoder_embedding')(decoder_inputs)
 
-            # Estados iniciales del decoder (entradas)
-            decoder_state_input_h = tf.keras.Input(shape=(self.latent_dim,), name='decoder_state_input_h')
-            decoder_state_input_c = tf.keras.Input(shape=(self.latent_dim,), name='decoder_state_input_c')
-            decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
-
-            # Embedding del decoder
-            decoder_embedding_layer = self.model.get_layer('decoder_embedding')
-            decoder_embedding = decoder_embedding_layer(decoder_inputs)
-
-            # LSTM del decoder con estados iniciales
-            decoder_lstm_layer = self.model.get_layer('decoder_lstm')
-            decoder_outputs, state_h_dec, state_c_dec = decoder_lstm_layer(
-                decoder_embedding, initial_state=decoder_states_inputs
-            )
-            decoder_states = [state_h_dec, state_c_dec]
-
-            # Capa densa de salida
-            decoder_dense_layer = self.model.get_layer('decoder_dense')
-            decoder_outputs = decoder_dense_layer(decoder_outputs)
-
-            # Definir el modelo del decoder para inferencia
-            self.decoder_model = tf.keras.Model(
-                [decoder_inputs] + decoder_states_inputs,
-                [decoder_outputs] + decoder_states
+            # LSTM del decoder
+            decoder_lstm = self.model.get_layer('decoder_lstm')
+            decoder_outputs, state_h, state_c = decoder_lstm(
+                decoder_embedding, initial_state=[decoder_state_input_h, decoder_state_input_c]
             )
 
-            logging.info("Modelos de inferencia configurados exitosamente.")
+            # Atención
+            attn_layer = self.model.get_layer('attention_layer')
+            attn_out = attn_layer([decoder_outputs, decoder_hidden_state_input])
+
+            # Concatenar
+            decoder_concat_input = self.model.get_layer('concat_layer')([decoder_outputs, attn_out])
+
+            # Capa densa
+            decoder_dense = self.model.get_layer('decoder_dense')
+            decoder_outputs = decoder_dense(decoder_concat_input)
+
+            self.decoder_model = Model(
+                [decoder_inputs, decoder_hidden_state_input, decoder_state_input_h, decoder_state_input_c],
+                [decoder_outputs, state_h, state_c]
+            )
+            logging.info("[Conversar] Modelo de inferencia del decoder configurado.")
+
         except Exception as e:
-            logging.error(f"Error al configurar los modelos de inferencia: {e}")
+            logging.error(f"[Conversar] Error al configurar los modelos de inferencia: {e}")
             self.encoder_model = None
             self.decoder_model = None
+

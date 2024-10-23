@@ -165,14 +165,15 @@ def main():
     numerology_model_file = 'numerology_model.keras'
 
     if os.path.exists(numerology_model_file):
+        # Cargar el modelo de numerología si ya existe
         logger.info(f"🟢 [Main - bot.py] Modelo de numerología preentrenado encontrado: {numerology_model_file}. Cargando el modelo...")
         numerology_model.load(numerology_model_file)
     else:
-        logger.info("🟡 [Main - bot.py] No se encontró un modelo de numerología preentrenado.")
+        # Entrenar el modelo de numerología si no existe
+        logger.info("🟡 [Main - bot.py] No se encontró un modelo de numerología preentrenado. Iniciando entrenamiento...")
         numerology_model.train()
-        numerology_model.save(numerology_model_file)
 
-    # Verificar nuevamente si el modelo de numerología está entrenado
+    # Verificar nuevamente si el modelo de numerología está entrenado correctamente
     if not numerology_model.is_trained:
         logger.error("🔴 [Main - bot.py] El modelo de numerología no se pudo entrenar. Por favor, verifica los pasos de entrenamiento.")
         return
@@ -185,14 +186,15 @@ def main():
     conversar_model_file = 'conversational_model.keras'
 
     if os.path.exists(conversar_model_file):
+        # Cargar el modelo conversacional si ya existe
         logger.info(f"🟢 [Main - bot.py] Modelo conversacional preentrenado encontrado: {conversar_model_file}. Cargando el modelo...")
         conversar_model.cargar_modelo()
     else:
-        logger.info("🟡 [Main - bot.py] No se encontró un modelo conversacional preentrenado.")
+        # Entrenar el modelo conversacional si no existe
+        logger.info("🟡 [Main - bot.py] No se encontró un modelo conversacional preentrenado. Iniciando entrenamiento...")
         conversar_model.train()
-        conversar_model.guardar_modelo()
 
-    # Si el modelo no está entrenado después de cargar o entrenar, mostrar error
+    # Verificar nuevamente si el modelo de conversación está entrenado correctamente
     if not conversar_model.is_trained:
         logger.error("🔴 [Main - bot.py] El modelo conversacional no se pudo entrenar o cargar. Por favor, verifica los pasos de entrenamiento.")
         return
