@@ -1,5 +1,3 @@
-#bot.py
-
 import os
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
@@ -15,11 +13,11 @@ import traceback
 from telegram import Update
 from telegram.ext import CallbackContext
 
-#Importando Json para la creacion del archivo de los ajustes finos segun el tiempo
+# Importando Json para la creación del archivo de los ajustes finos según el tiempo
 import json
 
 # Importar otros módulos del proyecto
-from model import NumerologyModel, Conversar
+from model import NumerologyModel
 from database import Database
 from scheduler import start_scheduler  # Importar el scheduler
 
@@ -100,7 +98,7 @@ sys.excepthook = global_exception_handler
 if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-def load_commands(application, db, numerology_model, conversar_model):
+def load_commands(application, db, numerology_model):
     """Carga automáticamente los archivos de la carpeta 'commands' y los registra como comandos en el bot"""
     commands_dir = 'commands'
 
@@ -125,8 +123,8 @@ def load_commands(application, db, numerology_model, conversar_model):
                         # Comandos que solo necesitan `db`
                         application.add_handler(CommandHandler(command_name, partial(command_function, db=db)))
                     else:
-                        # Comandos que necesitan `db`, `numerology_model`, y `conversar_model`
-                        application.add_handler(CommandHandler(command_name, partial(command_function, db=db, numerology_model=numerology_model, conversar_model=conversar_model)))
+                        # Comandos que necesitan `db` y `numerology_model`
+                        application.add_handler(CommandHandler(command_name, partial(command_function, db=db, numerology_model=numerology_model)))
 
                     logger.info(f"Comando /{command_name} registrado exitosamente.")
                 else:
@@ -137,14 +135,14 @@ def load_commands(application, db, numerology_model, conversar_model):
             except Exception as e:
                 logger.error(f"Error al registrar el comando /{command_name} del archivo {filename}: {e}", exc_info=True)
 
-def register_message_handler(application, db, conversar_model, numerology_model):
+def register_message_handler(application, db, numerology_model):
     """Registra el MessageHandler para manejar mensajes de texto generales"""
     from commands.handle_message import handle_message
     
     # Utilizamos partial para pasar los modelos y db como argumentos adicionales
     message_handler = MessageHandler(
         filters.TEXT & ~filters.COMMAND, 
-        partial(handle_message, numerology_model=numerology_model, conversar_model=conversar_model, db=db)  # Usamos partial para pasar los argumentos
+        partial(handle_message, numerology_model=numerology_model, db=db)  # Usamos partial para pasar los argumentos
     )
     
     application.add_handler(message_handler)
@@ -193,38 +191,17 @@ def main():
         logger.error("🔴 [Main - bot.py] El modelo de numerología no se pudo entrenar. Por favor, verifica los pasos de entrenamiento.")
         return
 
-    # Inicializar el modelo de conversación
-    logger.info("💬 [Main - bot.py] Inicializando el modelo de conversación...")
-    conversar_model = Conversar(db)
-
-    # Verificar si el modelo conversacional ya está entrenado
-    conversar_model_file = 'conversational_model_conversar.keras'  # Actualizado
-
-    if os.path.exists(conversar_model_file):
-        # Cargar el modelo conversacional si ya existe
-        logger.info(f"🟢 [Main - bot.py] Modelo conversacional preentrenado encontrado: {conversar_model_file}. Cargando el modelo...")
-        conversar_model.cargar_modelo()
-    else:
-        # Entrenar el modelo conversacional si no existe
-        logger.info("🟡 [Main - bot.py] No se encontró un modelo conversacional preentrenado. Iniciando entrenamiento...")
-        conversar_model.train()
-
-    # Verificar nuevamente si el modelo de conversación está entrenado correctamente
-    if not conversar_model.is_trained:
-        logger.error("🔴 [Main - bot.py] El modelo conversacional no se pudo entrenar o cargar. Por favor, verifica los pasos de entrenamiento.")
-        return
-
     # Crear la aplicación de Telegram
     logger.info("🤖 [Main - bot.py] Creando la aplicación de Telegram...")
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     # Cargar los comandos dinámicamente desde la carpeta "commands"
     logger.info("📦 [Main - bot.py] Cargando comandos...")
-    load_commands(application, db, numerology_model, conversar_model)
+    load_commands(application, db, numerology_model)
 
     # Registrar el MessageHandler para mensajes de texto generales
     logger.info("📨 [Main - bot.py] Registrando manejador de mensajes generales...")
-    register_message_handler(application, db, conversar_model, numerology_model)
+    register_message_handler(application, db, numerology_model)
 
     # Agregar manejador de errores global
     logger.info("🛠️ [Main - bot.py] Agregando manejador de errores global...")
@@ -232,7 +209,7 @@ def main():
 
     # Iniciar el scheduler para el reentrenamiento periódico
     logger.info("⏰ [Main - bot.py] Iniciando el scheduler para reentrenamiento periódico...")
-    start_scheduler(numerology_model, conversar_model)
+    start_scheduler(numerology_model)
 
     # Iniciar el bot
     logger.info("✅ [Main - bot.py] Iniciando el bot con polling...")

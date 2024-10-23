@@ -9,7 +9,7 @@ import os
 
 logger = logging.getLogger(__name__)
 
-async def synap(update: Update, context: ContextTypes.DEFAULT_TYPE, db, numerology_model, conversar_model):
+async def synap(update: Update, context: ContextTypes.DEFAULT_TYPE, db, numerology_model):
     logger.info(f"Comando /synap recibido de {update.message.from_user.username}")
 
     # Obtener el ID del grupo VIP desde las variables de entorno
@@ -42,15 +42,6 @@ async def synap(update: Update, context: ContextTypes.DEFAULT_TYPE, db, numerolo
     if not grupo_activado:
         logger.info(f"El grupo {update.message.chat_id} está desactivado, usando el modelo local.")
         await update.message.reply_text("Este grupo está desactivado. Usando predicciones del modelo local.", parse_mode='HTML')
-
-        # Generar la respuesta utilizando el modelo local
-        user_input = ' '.join(context.args)
-        if not user_input:
-            await update.message.reply_text('Por favor, proporciona un número en tu consulta.', parse_mode='HTML')
-            return
-
-        local_response = conversar_model.generate_response(user_input)
-        await update.message.reply_text(local_response, parse_mode='HTML')
         return
 
     # Continuar con el proceso habitual si el grupo está activado

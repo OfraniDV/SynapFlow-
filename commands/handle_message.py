@@ -1,15 +1,12 @@
-# commands/handle_message.py
-
 import logging
 import os
 import re
 from telegram import Update
 from telegram.ext import ContextTypes
-from model import Conversar, NumerologyModel  # Importar las clases necesarias
+from model import NumerologyModel  # Importar la clase necesaria
 from database import Database  # Importar la clase de base de datos
-import pickle
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, numerology_model, conversar_model, db):
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, numerology_model, db):
     """Función para manejar cualquier mensaje de texto y generar una respuesta solo si el grupo está autorizado"""
     logger = logging.getLogger(__name__)
 
@@ -84,49 +81,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, num
             logger.error(f"Error en predicción numerológica: {e}")
             numerology_response = "#Numerologiaenentrenamiento\nError al procesar el número proporcionado."
 
-        # Respuesta del modelo local
-        try:
-            local_response = conversar_model.model_generate_response(user_message)
-            final_local_response = f"#ModeloConversacionenentrenamiento\n{local_response}"
-        except Exception as e:
-            logger.error(f"Error en modelo local: {e}")
-            final_local_response = "#ModeloConversacionenentrenamiento\nError al generar respuesta local."
-
-        # Respuesta de GPT-4
-        try:
-            gpt_response = conversar_model.gpt4o_generate_response(user_message)
-            final_gpt_response = f"#GPT4Entrenandomismodelos\n{gpt_response}"
-
-            # Almacenar la respuesta de GPT-4 para el ajuste fino de ambos modelos
-            conversar_model.almacenar_para_ajuste_fino(user_message, gpt_response)  # Guardar para ajustes finos
-        except Exception as e:
-            logger.error(f"Error en GPT-4: {e}")
-            final_gpt_response = "#GPT4Entrenandomismodelos\nError al generar respuesta GPT-4."
-
-        # Enviar todas las respuestas en mensajes separados
+        # Enviar la respuesta de numerología
         await update.message.reply_text(numerology_response, parse_mode='HTML')
-        await update.message.reply_text(final_local_response, parse_mode='HTML')
-        await update.message.reply_text(final_gpt_response, parse_mode='HTML')
 
         return
-
-    # Si no contiene números, proceder con el modelo conversacional
-    if not conversar_model.is_trained:
-        await update.message.reply_text('El modelo conversacional no está disponible en este momento.')
-        return
-
-    response = conversar_model.generate_response(user_message)
-
-    # Almacenar la interacción en 'ajuste_fino_datos_conversar.pkl'
-    try:
-        ajustar_fino_data = {
-            'input': user_message,
-            'response': response
-        }
-        with open('ajuste_fino_datos_conversar.pkl', 'ab') as f:
-            pickle.dump(ajustar_fino_data, f)
-        logger.info("Interacción almacenada para ajuste fino.")
-    except Exception as e:
-        logger.error(f"Error al almacenar datos para ajuste fino: {e}")
-
-    await update.message.reply_text(f"🤖 <b>Respuesta:</b> {response}", parse_mode='HTML')

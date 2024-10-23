@@ -32,7 +32,7 @@ from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.layers import Layer
 from tensorflow.keras.layers import Dropout
-
+from tensorflow.keras.layers import Conv1D, MaxPooling1D, Reshape
 
 
 # Importaciones de Scikit-learn para procesamiento de datos
@@ -75,70 +75,6 @@ logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
 logger.info('Logger inicializado correctamente.')
-
-# Definir la capa de atención personalizada
-class AttentionLayer(Layer):
-    def call(self, inputs):
-        decoder_outputs, encoder_outputs = inputs
-        attn_layer = tf.keras.layers.Attention(name='attention_layer')
-        return attn_layer([decoder_outputs, encoder_outputs])
-
-def build_model(self):
-    """Construye el modelo Encoder-Decoder mejorado con mecanismo de atención."""
-    try:
-        logging.info("[Conversar] Construyendo el modelo Encoder-Decoder mejorado con atención...")
-
-        # Tamaño del vocabulario y dimensiones
-        vocab_size = len(self.tokenizer.word_index) + 1
-        embedding_dim = 256  # Puedes ajustar este valor
-        latent_dim = 512     # Aumentamos el tamaño de la capa LSTM
-
-        logging.info(f"[Conversar] Tamaño del vocabulario: {vocab_size}")
-        logging.info(f"[Conversar] Dimensión de embedding: {embedding_dim}")
-        logging.info(f"[Conversar] Dimensión latente (LSTM units): {latent_dim}")
-
-        # ENCODER
-        encoder_inputs = Input(shape=(None,), name='encoder_inputs')
-        encoder_embedding = Embedding(input_dim=vocab_size, output_dim=embedding_dim, mask_zero=True, name='encoder_embedding')(encoder_inputs)
-        encoder_lstm = Bidirectional(LSTM(latent_dim, return_sequences=True, return_state=True, name='encoder_lstm'))
-        encoder_outputs, forward_h, forward_c, backward_h, backward_c = encoder_lstm(encoder_embedding)
-        state_h = Concatenate()([forward_h, backward_h])
-        state_c = Concatenate()([forward_c, backward_c])
-        encoder_states = [state_h, state_c]
-
-        # DECODER
-        decoder_inputs = Input(shape=(None,), name='decoder_inputs')
-        decoder_embedding = Embedding(input_dim=vocab_size, output_dim=embedding_dim, mask_zero=True, name='decoder_embedding')(decoder_inputs)
-        decoder_lstm = LSTM(latent_dim * 2, return_sequences=True, return_state=True, name='decoder_lstm')
-        decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
-
-        # MECANISMO DE ATENCIÓN
-        attn_out = AttentionLayer()([decoder_outputs, encoder_outputs])
-
-        # Concatenar la salida del decoder y el contexto de atención
-        decoder_concat_input = Concatenate(axis=-1, name='concat_layer')([decoder_outputs, attn_out])
-
-        # Capa densa final para generar la predicción de la siguiente palabra
-        decoder_dense = Dense(vocab_size, activation='softmax', name='decoder_dense')
-        decoder_outputs = decoder_dense(decoder_concat_input)
-
-        # Modelo de entrenamiento
-        self.model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
-        logging.info("[Conversar] Modelo de entrenamiento creado.")
-
-        # Compilar el modelo
-        self.model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-        logging.info("[Conversar] Modelo compilado exitosamente.")
-
-        # Configurar los modelos de inferencia
-        self.setup_inference_models()
-        logging.info("[Conversar] Modelos de inferencia configurados.")
-
-        logging.info("[Conversar] Modelo Encoder-Decoder mejorado construido y compilado exitosamente.")
-
-    except Exception as e:
-        logging.error(f"[Conversar] Error al construir el modelo: {e}")
-        self.model = None
 
 class NumerologyModel:
     def __init__(self, db):
@@ -283,15 +219,19 @@ class NumerologyModel:
                 logging.warning("No se encontraron entradas válidas para el ajuste fino.")
                 return
 
-            # Generar características y etiquetas a partir de las fórmulas
+            # **Generar características y etiquetas a partir de las fórmulas**
             nuevas_X = [self.generate_features(input_number) for input_number in inputs]
             nuevas_X = pad_sequences(nuevas_X, maxlen=self.max_sequence_length)
             nuevas_y = self.mlb.fit_transform(respuestas)
 
+            # **Verificar la forma de las características para que sea compatible con CNN 1D**
+            if len(nuevas_X.shape) == 2:
+                nuevas_X = np.expand_dims(nuevas_X, axis=-1)  # Añadir una tercera dimensión para la capa CNN 1D
+
             # Revisar dimensiones de las características y etiquetas
             logging.info(f"Forma de nuevas_X: {nuevas_X.shape}")
             logging.info(f"Forma de nuevas_y: {nuevas_y.shape}")
-            
+
             # Verificar si las dimensiones de nuevas_X y nuevas_y coinciden
             if nuevas_X.shape[0] != nuevas_y.shape[0]:
                 logging.error(f"Las dimensiones de nuevas_X ({nuevas_X.shape}) y nuevas_y ({nuevas_y.shape}) no coinciden.")
@@ -306,55 +246,97 @@ class NumerologyModel:
                 self.model.compile(loss='binary_crossentropy', optimizer='adam', metrics=['accuracy'])
                 logging.info(f"Capa de salida del modelo ajustada a {nuevas_y.shape[1]} clases.")
 
-            # Realizar el ajuste fino del modelo basado en las fórmulas
+            # **Realizar el ajuste fino del modelo basado en las fórmulas**
             logging.info("Comenzando el ajuste fino del modelo.")
             self.model.fit(nuevas_X, nuevas_y, epochs=2, batch_size=10)
             logging.info("Ajustes finos aplicados exitosamente basados en las fórmulas.")
-
-        except Exception as e:
-            logging.error(f"Error al aplicar ajustes finos: {e}")
-
-
-    def ajuste_fino(self):
-        """Realiza un ajuste fino en el modelo de numerología utilizando solo fórmulas extraídas."""
-        try:
-            # Obtener todas las fórmulas desde la tabla logsfirewallids
-            formulas = self.db.get_all_formulas()
-            if not formulas:
-                logging.error("No se encontraron fórmulas en la tabla logsfirewallids.")
-                return
-
-            # Extraer reglas de las fórmulas
-            logging.info("Extrayendo reglas de las fórmulas...")
-            self.extract_rules_from_formulas(formulas)
-
-            # Si no se han extraído suficientes reglas, no realizar el ajuste fino
-            if len(self.mapping) == 0:
-                logging.error("No se encontraron suficientes reglas para el ajuste fino.")
-                return
-
-            # Preparar los datos actuales (fórmulas e interacciones)
-            logging.info("Iniciando la preparación de los datos para ajuste fino...")
-            self.prepare_data()
-
-            if not hasattr(self, 'X') or not hasattr(self, 'y') or self.X.size == 0 or len(self.y) == 0:
-                logging.error("No hay suficientes datos para realizar el ajuste fino.")
-                return
-
-            # Realizar ajuste fino basado en las reglas extraídas de las fórmulas
-            logging.info("Realizando ajuste fino del modelo basado en las fórmulas...")
-            X_train = self.generar_caracteristicas(self.X)
-            y_binarized = self.preprocesar_etiquetas(self.y)
-
-            self.model.fit(X_train, y_binarized, epochs=2, batch_size=10, verbose=1)
-            logging.info("Ajuste fino completado exitosamente.")
 
             # Guardar el modelo ajustado
             self.model.save('numerology_model_finetuned.keras')
             logging.info("Modelo ajustado guardado como 'numerology_model_finetuned.keras'.")
 
         except Exception as e:
-            logging.error(f"Error durante el ajuste fino NumerologyModel: {e}")
+            logging.error(f"Error al aplicar ajustes finos: {e}")
+            
+    def cargar_estado_procesamiento(self):
+        """Carga el ID de la última fila procesada desde el archivo 'estado_procesamiento.json'."""
+        try:
+            if not os.path.exists('estado_procesamiento.json'):
+                logging.info("Archivo 'estado_procesamiento.json' no encontrado. Creando uno nuevo con valor inicial 0.")
+                with open('estado_procesamiento.json', 'w') as file:
+                    json.dump({"last_processed_id": 0}, file)
+                return 0
+            else:
+                with open('estado_procesamiento.json', 'r') as file:
+                    data = json.load(file)
+                    return data.get('last_processed_id', 0)
+        except Exception as e:
+            logging.error(f"Error al cargar el estado de procesamiento: {e}")
+            return 0
+
+    def actualizar_estado_procesamiento(self, last_processed_id):
+        """Actualiza el ID de la última fila procesada en el archivo 'estado_procesamiento.json'."""
+        try:
+            with open('estado_procesamiento.json', 'w') as file:
+                json.dump({"last_processed_id": last_processed_id}, file)
+            logging.info(f"Estado de procesamiento actualizado a ID: {last_processed_id}")
+        except Exception as e:
+            logging.error(f"Error al actualizar el estado de procesamiento: {e}")
+
+    def ajuste_fino(self):
+        """Realiza un ajuste fino del modelo utilizando mensajes nuevos desde la última fila procesada."""
+        try:
+            # Cargar el último ID procesado desde el archivo 'estado_procesamiento.json'
+            last_processed_id = self.cargar_estado_procesamiento()
+            logging.info(f"⚙️ [Ajuste Fino] Último ID procesado: {last_processed_id}")
+
+            # Obtener los nuevos mensajes desde la base de datos
+            nuevos_mensajes = self.db.get_messages_since(last_processed_id)
+
+            if not nuevos_mensajes:
+                logging.info("🔄 [Ajuste Fino] No se encontraron nuevos mensajes para el ajuste fino.")
+                return
+
+            logging.info(f"🔄 [Ajuste Fino] Se encontraron {len(nuevos_mensajes)} nuevos mensajes para el ajuste fino.")
+
+            # Obtener todas las fórmulas de la base de datos para extraer reglas
+            logging.info("📝 [Ajuste Fino] Obteniendo fórmulas para extraer nuevas reglas...")
+            formulas = self.db.get_all_formulas()
+            if not formulas:
+                logging.warning("⚠️ [Ajuste Fino] No se encontraron fórmulas para actualizar las reglas.")
+                return
+
+            # Extraer reglas a partir de las fórmulas
+            logging.info("🔍 [Ajuste Fino] Extrayendo reglas de las fórmulas obtenidas...")
+            extracted_rules = self.extract_rules_from_formulas(formulas)
+            if not extracted_rules:
+                logging.warning("⚠️ [Ajuste Fino] No se pudieron extraer reglas de las fórmulas.")
+                return
+
+            # Procesar los nuevos mensajes para ajustar el modelo
+            logging.info("🔧 [Ajuste Fino] Ajustando el modelo basado en las nuevas reglas...")
+            X_train = [self.generate_features(rule['input_number']) for rule in extracted_rules]
+            X_train = pad_sequences(X_train, maxlen=self.max_sequence_length)
+            y_train = self.mlb.fit_transform([rule['recommended_numbers'] for rule in extracted_rules])
+
+            # Realizar el ajuste fino del modelo
+            if X_train.shape[0] > 0 and y_train.shape[0] > 0:
+                logging.info("🛠️ [Ajuste Fino] Realizando ajuste fino del modelo...")
+                self.model.fit(X_train, y_train, epochs=2, batch_size=10)
+
+                # Actualizar el archivo con el nuevo 'last_processed_id'
+                nuevo_id = max([mensaje['id'] for mensaje in nuevos_mensajes])
+                self.actualizar_estado_procesamiento(nuevo_id)
+                logging.info(f"✅ [Ajuste Fino] Estado actualizado. Último ID procesado: {nuevo_id}")
+
+                logging.info("✔️ [Ajuste Fino] Ajuste fino del modelo completado exitosamente.")
+            else:
+                logging.warning("⚠️ [Ajuste Fino] No se encontraron suficientes datos para realizar el ajuste fino.")
+
+        except Exception as e:
+            logging.error(f"❌ [Ajuste Fino] Error durante el ajuste fino: {e}")
+
+
 
     def generar_caracteristicas(self, X_data):
         """Genera las características para el ajuste fino."""
@@ -398,38 +380,12 @@ class NumerologyModel:
             logging.error("No se pudieron extraer reglas de las fórmulas.")
             return
 
-        # Obtener interacciones desde la tabla logsfirewallids
-        interactions = self.db.get_all_interactions()
-        if interactions:
-            interaction_data = []
-            for user_input, recommendations in interactions:
-                # Convertir user_input a número entero
-                try:
-                    input_number = int(user_input.strip())
-                except ValueError:
-                    #logging.warning(f"Entrada de usuario inválida: {user_input}")
-                    continue  # Ignorar si no es un número válido
-
-                # Procesar recomendaciones (asumiendo que están almacenadas como una cadena separada por comas)
-                recommended_numbers = [num.strip() for num in recommendations.split(',') if num.strip().isdigit()]
-                if not recommended_numbers:
-                    #logging.warning(f"Recomendaciones inválidas: {recommendations}")
-                    continue
-
-                interaction_data.append({'input_number': input_number, 'recommended_numbers': recommended_numbers})
-
-            # Agregar los datos de interacciones al conjunto de datos principal
-            data.extend(interaction_data)
-            #logging.info(f"Datos combinados de fórmulas e interacciones: {len(data)} entradas.")
-
-        # Crear DataFrame
+        # Crear DataFrame con los datos extraídos
         self.data = pd.DataFrame(data, columns=['input_number', 'recommended_numbers'])
 
         # Preprocesar los datos
         self.X = self.data['input_number'].values.reshape(-1, 1)
         self.y = self.data['recommended_numbers'].apply(lambda x: [int(num) for num in x])
-        #logging.info(f"Datos de entrenamiento X: {self.X}")
-        #logging.info(f"Etiquetas de entrenamiento y: {self.y}")
 
         # Preparar los números atrasados más significativos
         # Asumimos que self.delayed_numbers se ha llenado en extract_rules_from_formulas
@@ -439,7 +395,6 @@ class NumerologyModel:
                 # Obtener el número con más días de atraso en la categoría
                 max_delay = max(self.delayed_numbers[category], key=lambda x: x['days'])
                 self.most_delayed_numbers[category] = max_delay
-        #logging.info(f"Números más atrasados por categoría: {self.most_delayed_numbers}")
 
     def extract_rules_from_formulas(self, formulas):
         data = []
@@ -806,24 +761,27 @@ class NumerologyModel:
         try:
             logging.info("===== [NumerologyModel] Iniciando el entrenamiento del modelo de numerología =====")
 
+            # Obtener todas las fórmulas de la base de datos
+            logging.info("[NumerologyModel] Obteniendo todas las fórmulas desde la base de datos...")
+            formulas = self.db.get_all_formulas()
+            if not formulas:
+                logging.error("[NumerologyModel] No se encontraron fórmulas para el entrenamiento.")
+                self.is_trained = False
+                return
+
+            # Extraer reglas a partir de las fórmulas
+            logging.info("[NumerologyModel] Extrayendo reglas a partir de las fórmulas...")
+            extracted_rules = self.extract_rules_from_formulas(formulas)
+            if not extracted_rules:
+                logging.error("[NumerologyModel] No se pudieron extraer reglas de las fórmulas.")
+                self.is_trained = False
+                return
+
             # Preparar los datos
             logging.info("[NumerologyModel] Preparando los datos para el entrenamiento...")
-            self.prepare_data()
 
-            # Verificar que los datos de entrada y las etiquetas existen
-            if not hasattr(self, 'X') or not hasattr(self, 'y'):
-                logging.error("[NumerologyModel] Los datos de entrenamiento no están disponibles. Asegúrate de que los datos fueron cargados correctamente.")
-                self.is_trained = False
-                return
-
-            if self.X.size == 0 or len(self.y) == 0:
-                logging.error("[NumerologyModel] No hay datos suficientes para entrenar el modelo. X o y están vacíos.")
-                self.is_trained = False
-                return
-
-            # Incorporar vibraciones y otros datos en las características usando la función generate_features
-            logging.info("[NumerologyModel] Incorporando vibraciones y otros datos en las características...")
-            X_features = [self.generate_features(int(input_number)) for input_number in self.X.flatten()]
+            # Generar las características usando la función generate_features
+            X_features = [self.generate_features(rule['input_number']) for rule in extracted_rules]
 
             # Verificar que X_features no esté vacío antes de calcular max_sequence_length
             if not X_features or len(X_features) == 0:
@@ -835,19 +793,13 @@ class NumerologyModel:
             self.max_sequence_length = max(len(seq) for seq in X_features)
             logging.info(f"[NumerologyModel] Longitud máxima de secuencia establecida en: {self.max_sequence_length}")
 
-            # Verificar que max_sequence_length sea válida
-            if not isinstance(self.max_sequence_length, int) or self.max_sequence_length <= 0:
-                logging.error(f"[NumerologyModel] max_sequence_length no es válido: {self.max_sequence_length}")
-                self.is_trained = False
-                return
-
             # Convertir a matriz numpy con padding
             X_train = pad_sequences(X_features, padding='post', dtype='int32', maxlen=self.max_sequence_length)
             logging.info(f"[NumerologyModel] Forma final de X_train después del padding: {X_train.shape}")
 
             # Preprocesar las etiquetas con MultiLabelBinarizer
             self.mlb = MultiLabelBinarizer()
-            y_binarized = self.mlb.fit_transform(self.y)
+            y_binarized = self.mlb.fit_transform([rule['recommended_numbers'] for rule in extracted_rules])
             logging.info(f"[NumerologyModel] Forma de y_binarized después de aplicar MultiLabelBinarizer: {y_binarized.shape}")
 
             # Verificar si hay valores NaN o Inf
@@ -864,17 +816,19 @@ class NumerologyModel:
             num_classes = y_binarized.shape[1]  # Número de clases únicas en las etiquetas
             logging.info(f"[NumerologyModel] Número de clases en y_binarized: {num_classes}")
 
-            # Definir el modelo de red neuronal para secuencias con una arquitectura mejorada
-            max_input_value = np.max(X_train) + 1  # Valor máximo de entrada para la capa Embedding
-            logging.info(f"[NumerologyModel] El valor máximo de entrada para la capa Embedding será: {max_input_value}")
-
-            # Definir la arquitectura del modelo mejorada
+            # Arquitectura del modelo (simplificada)
             self.model = Sequential()
-            self.model.add(Embedding(input_dim=max_input_value, output_dim=128))
+
+            # Capa Embedding
+            self.model.add(Embedding(input_dim=np.max(X_train) + 1, output_dim=128, input_length=self.max_sequence_length))
+
+            # Capas LSTM Bidireccionales
             self.model.add(Bidirectional(LSTM(128, return_sequences=True)))
             self.model.add(Dropout(0.3))
             self.model.add(Bidirectional(LSTM(64)))
             self.model.add(Dropout(0.3))
+
+            # Capa Densa
             self.model.add(Dense(num_classes, activation='sigmoid'))
 
             # Compilar el modelo
@@ -948,6 +902,12 @@ class NumerologyModel:
 
     def create_vip_message(self, input_number):
         recommended_numbers = self.predict(input_number)
+
+        # Limitar la cantidad de números recomendados a un máximo de 10
+        max_recommended_numbers = 10
+        if len(recommended_numbers) > max_recommended_numbers:
+            recommended_numbers = recommended_numbers[:max_recommended_numbers]  # Limitar a los primeros 10 números
+
         current_date = datetime.now()
         day_of_week = current_date.strftime("%A")  # Día de la semana en inglés
         day_of_week_es = self.get_day_in_spanish(day_of_week)  # Traducir a español
@@ -1053,6 +1013,7 @@ class NumerologyModel:
 
         return message
 
+
     def get_vibrations_for_day(self, day_of_week_es):
         try:
             # Obtener las vibraciones del día desde self.vibrations_by_day
@@ -1078,837 +1039,3 @@ class NumerologyModel:
             "Sunday": "Domingo"
         }
         return days_mapping.get(day_in_english, day_in_english)
-
-# Class Conversar
-class Conversar:
-    def __init__(self, db):
-        """
-        Inicializa la clase Conversar con una conexión a la base de datos, un modelo no entrenado y un tokenizer.
-        Args:
-            db (object): Conexión a la base de datos para cargar o guardar datos relacionados con el bot.
-        """
-        if db is None or not hasattr(db, 'get_all_messages'):
-            raise ValueError("La conexión a la base de datos no está configurada correctamente o es inválida.")
-
-        self.db = db  # Conexión a la base de datos
-
-        # Inicialización del modelo y tokenizer (se cargarán más tarde)
-        self.model = None
-        self.tokenizer = None
-
-        # Variable que indica si el modelo está entrenado
-        self.is_trained = False
-
-        # Longitud máxima de las secuencias de entrada
-        self.max_sequence_length = 20  # Define el tamaño máximo de las secuencias aquí
-
-        # Tamaño de la capa LSTM
-        self.latent_dim = 256
-
-        # Límite de vocabulario a las 10,000 palabras más frecuentes
-        self.num_words = 10000
-
-        # Definir nombres de archivos específicos para Conversar
-        self.model_filename = 'conversational_model_conversar.keras'
-        self.tokenizer_filename = 'tokenizer_conversar.pkl'
-        self.ajuste_fino_file = 'ajuste_fino_datos_conversar.pkl'
-
-        # Cargar el modelo y el tokenizer si están disponibles
-        self.cargar_modelo()
-
-        # Validar si el modelo y el tokenizer se cargaron correctamente
-        if self.model and self.tokenizer:
-            self.is_trained = True
-            logging.info("Modelo y tokenizer cargados exitosamente.")
-        else:
-            self.is_trained = False
-            logging.warning("Modelo o tokenizer no cargados. Entrenamiento será necesario.")
-
-    def cargar_modelo_y_tokenizer(self):
-        """Carga el modelo conversacional y el tokenizer."""
-        try:
-            start_time = time.time()
-
-            # Cargar el modelo desde un archivo
-            logging.info(f"Intentando cargar el modelo conversacional desde '{self.model_filename}'...")
-            self.model = tf.keras.models.load_model(self.model_filename)
-            logging.info(f"Modelo conversacional cargado exitosamente en {time.time() - start_time:.2f} segundos.")
-            
-            # Cargar el tokenizer desde un archivo
-            logging.info(f"Intentando cargar el tokenizer desde '{self.tokenizer_filename}'...")
-            with open(self.tokenizer_filename, 'rb') as f:
-                self.tokenizer = pickle.load(f)
-
-            # Verificar si el tokenizer fue cargado correctamente
-            if self.tokenizer:
-                logging.info("Tokenizer cargado exitosamente.")
-            else:
-                logging.warning("El tokenizer no se cargó correctamente.")
-            
-            # Indicar que el modelo ha sido cargado y está listo para usarse
-            self.is_trained = True
-            logging.info("El modelo y el tokenizer están listos para usarse.")
-
-        except Exception as e:
-            # Registrar el error en los logs
-            logging.error(f"Error al cargar el modelo o el tokenizer: {e}")
-            self.is_trained = False
-
-    def cargar_modelo(self):
-        """Carga el modelo conversacional y el tokenizer, y verifica si es compatible."""
-        try:
-            start_time = time.time()
-            logging.info(f"Intentando cargar el modelo conversacional desde '{self.model_filename}'...")
-            self.model = tf.keras.models.load_model(self.model_filename, compile=False)
-
-            if not self.model:
-                raise ValueError("El modelo no se cargó correctamente. self.model es None.")
-
-            logging.info(f"Modelo conversacional cargado exitosamente en {time.time() - start_time:.2f} segundos.")
-
-            logging.info(f"Intentando cargar el tokenizer desde '{self.tokenizer_filename}'...")
-            with open(self.tokenizer_filename, 'rb') as f:
-                self.tokenizer = pickle.load(f)
-
-            if not self.tokenizer:
-                raise ValueError("El tokenizer no se cargó correctamente.")
-
-            logging.info("Tokenizer cargado exitosamente.")
-
-            # Verificar si el modelo es compatible
-            if not self.verificar_compatibilidad_modelo():
-                raise ValueError("El modelo cargado no es compatible con el código actual.")
-
-            # Configurar los modelos de inferencia
-            self.setup_inference_models()
-
-            # Indicar que el modelo ha sido cargado y está listo para usarse
-            self.is_trained = True
-            logging.info("El modelo y el tokenizer están listos para usarse.")
-
-        except Exception as e:
-            logging.error(f"Error al cargar el modelo o el tokenizer: {e}")
-            self.is_trained = False
-
-
-
-    def verificar_compatibilidad_modelo(self):
-        """Verifica si el modelo cargado tiene las capas necesarias con los nombres correctos."""
-        required_layers = ['embedding', 'lstm', 'dense']  # Capas nuevas a verificar según el modelo actualizado
-        existing_layers = [layer.name for layer in self.model.layers]
-
-        missing_layers = [layer for layer in required_layers if layer not in existing_layers]
-        if missing_layers:
-            logging.error(f"Faltan las siguientes capas necesarias en el modelo: {missing_layers}")
-            return False
-        else:
-            logging.info("El modelo cargado es compatible.")
-            return True
-    
-    def generate_response(self, input_text):
-        """Genera una respuesta usando primero GPT-4 y luego, en caso de fallo, el modelo local."""
-        logger.info(f"Generando respuesta para el mensaje: {input_text}")
-
-        # Intentar obtener la respuesta de GPT-4
-        try:
-            gpt_response = self.gpt4o_generate_response(input_text)
-        except Exception as e:
-            gpt_response = None
-            logger.error(f"Error al intentar generar respuesta desde GPT-4o: {e}")
-
-        # Si GPT-4 genera una respuesta válida, la usamos
-        if gpt_response:
-            logger.info(f"Respuesta de GPT-4o recibida: {gpt_response}")
-            # Almacenar para ajuste fino si la respuesta es válida y adecuada
-            if len(gpt_response.split()) > 3:  # Asegurarse de que la respuesta es suficientemente larga
-                self.almacenar_para_ajuste_fino(input_text, gpt_response)
-                logger.info("Respuesta almacenada para ajuste fino.")
-            else:
-                logger.warning("Respuesta de GPT-4o es demasiado corta. No se almacenará para ajuste fino.")
-            return gpt_response
-
-        # Si no se obtuvo respuesta de GPT-4, generar con el modelo local
-        logger.warning("No se obtuvo respuesta de GPT-4o. Generando con el modelo local.")
-
-        # Verificar si el modelo local está entrenado antes de proceder
-        if not self.is_trained or self.model is None:
-            logger.error("El modelo local no está entrenado o no ha sido cargado. No se puede generar una respuesta coherente.")
-            return (
-                "El modelo local aún no está listo para generar una respuesta completa. "
-                "Estamos trabajando para mejorar esta función."
-            )
-
-        # Verificar que el tokenizer esté inicializado
-        if self.tokenizer is None:
-            logger.error("El tokenizer no ha sido inicializado. No se puede procesar el mensaje.")
-            return "El modelo local no está listo para procesar este mensaje."
-
-        # Intentar generar la respuesta con el modelo local
-        try:
-            logger.info("Generando respuesta con el modelo local.")
-            local_response = self.model_generate_response(input_text)
-        except Exception as e:
-            logger.error(f"Error al generar respuesta con el modelo local: {e}")
-            return "Se ha producido un error al generar la respuesta local. Por favor, intenta más tarde."
-
-        # Post-procesar la respuesta para mejorar la coherencia
-        final_response = self.post_process_response(local_response)
-
-        # Verificar si la respuesta local es válida
-        if not final_response or len(final_response.split()) < 3:
-            logger.error("La respuesta generada localmente no fue coherente o fue demasiado corta.")
-            return "No he podido generar una respuesta adecuada. Por favor, intenta reformular tu pregunta."
-
-        logger.info(f"Respuesta local generada exitosamente: {final_response}")
-
-        # Retornamos la respuesta local procesada
-        return final_response
-
-
-    def gpt4o_generate_response(self, input_text):
-        api_url = 'https://api.openai.com/v1/chat/completions'  # URL actualizada para chat completions
-        headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {os.getenv("OPENAI_API_KEY")}'
-        }
-        data = {
-            'model': 'gpt-4o-mini',
-            'messages': [
-                {
-                    "role": "system", 
-                    "content": (
-                        "Eres un experto científico de numerología especializado en análisis de patrones numéricos y predicciones de loterías. "
-                        "Proporciona respuestas precisas basadas en reglas matemáticas, con un enfoque analítico y siempre en español, "
-                        "a menos que el usuario hable en otro idioma."
-                    )
-                },
-                {"role": "user", "content": input_text}
-            ],
-            'max_tokens': 120,  # Limitar la longitud de la respuesta
-            'temperature': 0.6  # Reducir la creatividad para mantener respuestas coherentes y precisas
-        }
-
-        response = requests.post(api_url, headers=headers, json=data)
-        
-        if response.status_code == 200:
-            response_data = response.json()
-            return response_data['choices'][0]['message']['content']
-        else:
-            logger.error(f"Error al generar la respuesta desde OpenAI: {response.status_code}, {response.text}")
-            return None
-    
-    def almacenar_para_ajuste_fino(self, input_text, output_text):
-        """Almacena las entradas y salidas de GPT-4 para realizar un ajuste fino, adaptado al modelo Encoder-Decoder."""
-        try:
-            # Validar que el texto de entrada y la respuesta no sean vacíos o incoherentes
-            if not input_text or not output_text:
-                logging.warning("El texto de entrada o la respuesta están vacíos. No se almacenarán.")
-                return
-
-            # Verificar si la respuesta es suficientemente larga para el ajuste fino
-            if len(output_text.split()) < 3:
-                logging.warning(f"Respuesta demasiado corta, no se almacenará para ajuste fino: {output_text}")
-                return
-
-            # Limpiar los textos
-            cleaned_input = self.clean_text(input_text)
-            cleaned_response = self.clean_text(output_text)
-
-            # Agregar tokens de inicio y fin a la respuesta
-            cleaned_response = '<start> ' + cleaned_response + ' <end>'
-
-            # Crear los datos que serán almacenados
-            data = {"input": cleaned_input, "response": cleaned_response}
-
-            # Nombre del archivo para el ajuste fino del modelo conversacional
-            ajuste_fino_file = 'ajuste_fino_datos_conversar.pkl'
-            
-            # Verificar si el archivo ya existe para evitar duplicados
-            data_exists = False
-            if os.path.exists(ajuste_fino_file):
-                with open(ajuste_fino_file, 'rb') as f:
-                    try:
-                        while True:
-                            existing_data = pickle.load(f)
-                            if existing_data == data:
-                                data_exists = True
-                                logging.info("Datos duplicados encontrados. No se almacenarán nuevamente.")
-                                break
-                    except EOFError:
-                        pass  # Fin del archivo alcanzado
-                    except pickle.UnpicklingError as e:
-                        logging.error(f"Error al deserializar datos en el archivo existente: {e}")
-
-            # Si no hay datos duplicados, guardarlos
-            if not data_exists:
-                with open(ajuste_fino_file, 'ab') as f:
-                    pickle.dump(data, f)
-                logging.info("Datos almacenados para ajuste fino correctamente.")
-
-            # Opcional: Verificar el tamaño del archivo tras cada escritura
-            file_size = os.path.getsize(ajuste_fino_file)
-            logging.info(f"El tamaño actual del archivo de ajuste fino es {file_size} bytes.")
-
-        except Exception as e:
-            logging.error(f"Error al almacenar datos para ajuste fino: {e}")
-
-        
-    def limpiar_datos(self, nuevos_datos):
-        """
-        Limpia los datos nuevos aplicando la función clean_text.
-
-        Args:
-            nuevos_datos (list): Lista de diccionarios con claves 'input' y 'response'.
-
-        Returns:
-            list: Lista de diccionarios con los datos limpios.
-        """
-        try:
-            if not nuevos_datos or len(nuevos_datos) == 0:
-                logging.warning("Los datos proporcionados están vacíos o son nulos.")
-                return []
-
-            datos_limpios = []
-            for data in nuevos_datos:
-                if isinstance(data, dict) and 'input' in data and 'response' in data:
-                    # Limitar la longitud de los mensajes
-                    if len(data['input']) <= 200 and len(data['response']) <= 200:
-                        cleaned_input = self.clean_text(data['input'])
-                        cleaned_response = self.clean_text(data['response'])
-                        mensaje_hash = hash(cleaned_input + cleaned_response)
-                        if mensaje_hash in self.processed_messages:
-                            logging.info("Mensaje duplicado, se omite.")
-                            continue
-                        self.processed_messages.add(mensaje_hash)
-                        datos_limpios.append({'input': cleaned_input, 'response': cleaned_response})
-                    else:
-                        logging.warning(f"Mensaje demasiado largo, se omite: {data}")
-                else:
-                    logging.error(f"Formato de datos incorrecto o faltan claves: {data}")
-
-            if len(datos_limpios) == 0:
-                logging.warning("Todos los datos proporcionados estaban vacíos o no válidos después de la limpieza.")
-                return []
-
-            logging.info(f"Datos limpios generados: {len(datos_limpios)} ejemplos.")
-            return datos_limpios
-
-        except TypeError as te:
-            logging.error(f"Tipo de datos no válido al limpiar los datos: {te}")
-            return []
-        except Exception as e:
-            logging.error(f"Error inesperado al limpiar los datos para ajuste fino: {e}")
-            return []
-
-    # Mover las funciones dentro de la clase
-    def get_last_processed_id(self, filename='estado_procesamiento.json'):
-        """Obtiene el último ID de mensaje procesado desde el archivo de estado."""
-        if os.path.exists(filename):
-            with open(filename, 'r') as file:
-                data = json.load(file)
-                return data.get('last_processed_id', 0)
-        return 0  # Si no existe el archivo, comenzamos desde ID 0
-
-    def update_last_processed_id(self, last_id, filename='estado_procesamiento.json'):
-        """Actualiza el último ID de mensaje procesado en el archivo de estado."""
-        with open(filename, 'w') as file:
-            json.dump({'last_processed_id': last_id}, file)
-
-    def realizar_ajuste_fino(self, epochs=2):
-        """Realiza el ajuste fino del modelo conversacional utilizando los datos de ajuste fino."""
-        logger.info("[Conversar] Iniciando el ajuste fino del modelo conversacional.")
-
-        try:
-            # Obtener el último ID procesado desde el archivo de estado
-            last_processed_id = self.get_last_processed_id()
-
-            # Obtener todos los mensajes nuevos desde el último ID procesado
-            nuevos_mensajes = self.db.get_messages_since(last_processed_id)
-
-            if not nuevos_mensajes:
-                logger.info("[Conversar] No se encontraron mensajes nuevos para el ajuste fino.")
-                return
-
-            # Preparar secuencias de texto para ajuste fino
-            mensajes_nuevos = [self.clean_text(mensaje['mensaje']) for mensaje in nuevos_mensajes]
-
-            if not mensajes_nuevos:
-                logger.warning("[Conversar] No se encontraron mensajes válidos para el ajuste fino.")
-                return
-
-            # Cargar los datos previos y el tokenizer existente
-            if self.tokenizer is None:
-                try:
-                    with open(self.tokenizer_filename, 'rb') as f:
-                        self.tokenizer = pickle.load(f)
-                    logger.info("Tokenizer cargado exitosamente para ajuste fino.")
-                except FileNotFoundError:
-                    logger.warning("Tokenizer no encontrado. Se creará uno nuevo.")
-                    self.tokenizer = Tokenizer(num_words=self.num_words, oov_token="<OOV>")
-
-            # Cargar los datos de ajuste fino anteriores, si existen
-            mensajes_previos = []
-            if os.path.exists(self.ajuste_fino_file):
-                with open(self.ajuste_fino_file, 'rb') as f:
-                    mensajes_previos = pickle.load(f)
-            
-            # Combinar mensajes previos con los nuevos para no perder vocabulario
-            mensajes_totales = mensajes_previos + mensajes_nuevos
-
-            # Ajustar el tokenizer con los datos combinados (mensajes antiguos y nuevos)
-            self.tokenizer.fit_on_texts(mensajes_totales)
-
-            # **Actualizar el tamaño del vocabulario del modelo según el tokenizer**
-            self.num_words = len(self.tokenizer.word_index) + 1
-
-            # Guardar el nuevo estado de los mensajes (incluye ahora los nuevos)
-            with open(self.ajuste_fino_file, 'wb') as f:
-                pickle.dump(mensajes_totales, f)
-            logger.info(f"Datos de ajuste fino guardados en '{self.ajuste_fino_file}'.")
-
-            # Convertir los textos a secuencias
-            input_sequences = self.tokenizer.texts_to_sequences(mensajes_totales)
-
-            # Calcular la longitud máxima de las secuencias
-            self.max_sequence_length = max([len(seq) for seq in input_sequences])
-            logger.info(f"Longitud máxima de secuencias: {self.max_sequence_length}")
-
-            # Padding de las secuencias
-            input_data = pad_sequences(input_sequences, maxlen=self.max_sequence_length, padding='post')
-
-            # Preparar los datos objetivo (desplazando los tokens para predicción)
-            target_data = input_data[:, 1:]  # Desplazamiento de un token para el target
-            input_data = input_data[:, :-1]  # La entrada es todo menos el último token
-
-            # **Imprimimos las formas de las secuencias para verificar**
-            logger.info(f"Shape de input_data: {input_data.shape}")
-            logger.info(f"Shape de target_data: {target_data.shape}")
-
-            # Asegurarse de que el modelo está construido con el tamaño correcto del vocabulario
-            if self.model is None or self.model.input_shape[1] != self.num_words:
-                logger.info("[Conversar] El modelo no está construido correctamente. Reconstruyendo el modelo con el nuevo vocabulario...")
-                self.build_model()  # Asegúrate de que build_model toma en cuenta num_words actualizado
-
-            # Verificar la arquitectura del modelo
-            logger.info("[Conversar] Arquitectura del modelo:")
-            self.model.summary(print_fn=lambda x: logger.info(x))  # Imprimir la arquitectura del modelo
-
-            # Hacer una predicción antes de entrenar para verificar la salida
-            logger.info("[Conversar] Verificando una predicción inicial antes de entrenar...")
-            pred_output = self.model.predict(input_data[:1])
-            logger.info(f"Predicción inicial (forma): {pred_output.shape}")
-            logger.info(f"Primera predicción: {pred_output}")
-
-            # Verificar la forma del output y compararlo con target_data
-            if pred_output.shape[-1] != self.num_words:
-                logger.error(f"Error: El tamaño de la salida del modelo ({pred_output.shape[-1]}) no coincide con el tamaño del vocabulario ({self.num_words}).")
-
-            # Entrenar el modelo con los nuevos datos
-            logger.info(f"[Conversar] Realizando ajuste fino con {len(input_data)} ejemplos.")
-            self.model.fit(
-                input_data,
-                target_data,
-                batch_size=64,
-                epochs=epochs,
-                validation_split=0.2
-            )
-
-            # Actualizar el ID procesado en el archivo una vez completado el ajuste fino
-            self.update_last_processed_id(nuevos_mensajes[-1]['id'])
-
-            logger.info("[Conversar] Ajuste fino completado exitosamente.")
-
-            # Guardar el modelo actualizado
-            self.guardar_modelo()
-
-        except Exception as e:
-            logger.error(f"[Conversar] Error durante el ajuste fino del modelo: {e}")
-
-    def model_generate_response(self, input_text):
-        """Genera una respuesta utilizando un modelo secuencial en lugar del Encoder-Decoder."""
-        logger = logging.getLogger(__name__)
-        logger.info(f"Generando respuesta local para el mensaje: {input_text}")
-
-        # Preprocesar el texto de entrada
-        input_seq = self.tokenizer.texts_to_sequences([self.clean_text(input_text)])
-        input_seq = pad_sequences(input_seq, maxlen=self.max_sequence_length, padding='post')
-
-        # Verificar si el modelo está cargado y entrenado
-        if not self.model or not self.is_trained:
-            logger.error("El modelo no está entrenado o no ha sido cargado correctamente.")
-            return "Error: El modelo no está listo para generar respuestas."
-
-        # Realizar la predicción usando el modelo secuencial
-        try:
-            prediction = self.model.predict(input_seq)
-            predicted_word_index = np.argmax(prediction, axis=-1)[0]
-            predicted_word = self.tokenizer.index_word.get(predicted_word_index, '')
-
-            # Si el modelo generó una palabra válida, retornarla
-            if predicted_word:
-                return predicted_word
-            else:
-                logger.error("No se generó una respuesta válida.")
-                return "No se pudo generar una respuesta."
-
-        except Exception as e:
-            logger.error(f"Error al generar la respuesta: {e}")
-            return "Ocurrió un error al generar la respuesta."
-
-    
-    def post_process_response(self, response):
-        """
-        Aplica filtros y ajustes finales a la respuesta generada para mejorar la coherencia.
-        Elimina repeticiones, corrige errores gramaticales simples y mejora la estructura.
-        """
-        logger = logging.getLogger(__name__)
-
-        # Eliminar etiquetas <OOV> y limpiar espacios resultantes
-        response = response.replace('<OOV>', '').strip()
-        response = re.sub(r'\s+', ' ', response)  # Eliminar espacios adicionales
-
-        # Eliminar repeticiones de palabras consecutivas
-        words = response.split()
-        filtered_words = []
-        for i, word in enumerate(words):
-            if i > 0 and word.lower() == words[i-1].lower():  # Ignorar repeticiones consecutivas (case-insensitive)
-                continue
-            filtered_words.append(word)
-
-        # Reconstruir la respuesta filtrada
-        response = ' '.join(filtered_words)
-
-        # Corregir la gramática y estructura con spaCy (si está disponible)
-        if 'nlp' in globals() and nlp:  # Verificación más robusta para spaCy
-            doc = nlp(response)
-            response = ' '.join([token.text for token in doc])
-
-            # Eliminar frases redundantes (opcional)
-            sentences = list(doc.sents)
-            filtered_sentences = []
-            for i, sent in enumerate(sentences):
-                if i > 0 and str(sentences[i-1]).strip() == str(sent).strip():
-                    continue  # Omitir oraciones redundantes
-                filtered_sentences.append(str(sent))
-            response = ' '.join(filtered_sentences)
-
-        # Corregir posibles errores de puntuación y gramática básica
-        response = re.sub(r'\s+', ' ', response)  # Unificar múltiples espacios
-        response = re.sub(r'\.\.+', '.', response)  # Limitar múltiples puntos a un solo punto
-        response = re.sub(r'\s,', ',', response)    # Corregir espacio antes de las comas
-        response = re.sub(r'\s\.', '.', response)   # Corregir espacio antes de los puntos
-        response = re.sub(r' ,', ',', response)     # Corregir coma con espacio previo incorrecto
-        response = re.sub(r'\?+', '?', response)    # Limitar múltiples signos de interrogación a uno
-
-        logger.info(f"Respuesta post-procesada: {response}")
-        return response
-
-    def build_model(self):
-        """Construye un modelo secuencial para predecir el próximo token en una secuencia."""
-        try:
-            logging.info("[Conversar] Construyendo un modelo de lenguaje secuencial...")
-
-            # Verificar que el tokenizer esté inicializado
-            if not self.tokenizer:
-                raise ValueError("El tokenizer no está inicializado. No se puede construir el modelo.")
-
-            # Obtener el tamaño del vocabulario del tokenizer (limitar a num_words)
-            vocab_size = min(self.num_words, len(self.tokenizer.word_index) + 1)  # Limitar el tamaño del vocabulario
-            embedding_dim = 256  # Dimensión de embedding para las palabras
-            lstm_units = 512     # Dimensión de la capa LSTM
-
-            # Agregar logs para depuración
-            logging.info(f"[Conversar] Tamaño del vocabulario: {vocab_size}")
-            logging.info(f"[Conversar] Dimensión de embedding: {embedding_dim}")
-            logging.info(f"[Conversar] Unidades LSTM: {lstm_units}")
-            logging.info(f"[Conversar] Longitud máxima de la secuencia: {self.max_sequence_length}")
-
-            # Definir la arquitectura del modelo secuencial
-            self.model = tf.keras.models.Sequential()
-
-            # Capa de embedding para representar las palabras
-            logging.info("[Conversar] Agregando la capa de embedding...")
-            self.model.add(tf.keras.layers.Embedding(input_dim=vocab_size, output_dim=embedding_dim, input_length=self.max_sequence_length))
-            logging.info("[Conversar] Capa de embedding añadida correctamente.")
-
-            # Capa LSTM con Dropout para evitar el sobreajuste
-            logging.info("[Conversar] Agregando la capa LSTM...")
-            self.model.add(tf.keras.layers.LSTM(lstm_units, return_sequences=False))
-            self.model.add(tf.keras.layers.Dropout(0.5))  # Dropout para evitar sobreajuste
-            logging.info("[Conversar] Capa LSTM y Dropout añadidas correctamente.")
-
-            # Capa densa para predecir el siguiente token
-            logging.info("[Conversar] Agregando la capa densa con activación softmax...")
-            self.model.add(tf.keras.layers.Dense(vocab_size, activation='softmax'))  # Asegurar que la capa densa tenga vocab_size
-            logging.info("[Conversar] Capa densa añadida correctamente.")
-
-            # Compilar el modelo con una función de pérdida adecuada
-            logging.info("[Conversar] Compilando el modelo...")
-            self.model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
-            logging.info("[Conversar] Modelo secuencial construido y compilado exitosamente.")
-
-        except Exception as e:
-            logging.error(f"[Conversar] Error al construir el modelo: {e}")
-            self.model = None
-
-    def setup_inference_models(self):
-        """Configura el modelo de inferencia sin el Encoder-Decoder."""
-        try:
-            # Cargar el modelo previamente guardado
-            logging.info(f"[Conversar] Cargando el modelo desde '{self.model_filename}' para inferencia.")
-            self.model = tf.keras.models.load_model(self.model_filename)
-
-            # Verificar que el modelo es secuencial y tiene las capas esperadas
-            if not isinstance(self.model, tf.keras.models.Sequential):
-                raise ValueError("El modelo cargado no es del tipo 'Sequential', lo cual es requerido para esta arquitectura.")
-
-            # Verificar que el modelo tiene las capas esenciales
-            expected_layers = ['embedding', 'lstm', 'dense']
-            actual_layers = [layer.name for layer in self.model.layers]
-            missing_layers = [layer for layer in expected_layers if layer not in actual_layers]
-            
-            if missing_layers:
-                raise ValueError(f"Faltan las siguientes capas necesarias en el modelo cargado: {missing_layers}")
-
-            logging.info("[Conversar] Modelo de inferencia configurado correctamente.")
-
-        except FileNotFoundError:
-            logging.error(f"[Conversar] El archivo de modelo '{self.model_filename}' no fue encontrado.")
-            self.model = None
-        except ValueError as ve:
-            logging.error(f"[Conversar] Error en la validación del modelo: {ve}")
-            self.model = None
-        except Exception as e:
-            logging.error(f"[Conversar] Error general al configurar el modelo de inferencia: {e}")
-            self.model = None
-
-    def guardar_modelo(self):
-        """Guarda el modelo y el tokenizer entrenados."""
-        try:
-            # Guardar el modelo
-            self.model.save(self.model_filename)
-            logger.info(f"Modelo guardado exitosamente en '{self.model_filename}'.")
-
-            # Guardar el tokenizer
-            with open(self.tokenizer_filename, 'wb') as f:
-                pickle.dump(self.tokenizer, f)
-            logger.info(f"Tokenizer guardado exitosamente en '{self.tokenizer_filename}'.")
-
-        except Exception as e:
-            logger.error(f"Error al guardar el modelo o el tokenizer: {e}")
-
-    def prepare_data(self):
-        """Prepara los datos para el modelo secuencial de mensajes."""
-        logging.info("[Conversar] Iniciando la preparación de datos...")
-
-        try:
-            # Lista para almacenar los mensajes
-            mensajes = []
-
-            # Verificar si el archivo de ajuste fino existe
-            if os.path.exists(self.ajuste_fino_file):
-                logging.info(f"[Conversar] Cargando datos de ajuste fino desde '{self.ajuste_fino_file}'.")
-                with open(self.ajuste_fino_file, 'rb') as f:
-                    while True:
-                        try:
-                            data = pickle.load(f)
-                            if 'input' in data:
-                                mensajes.append(data['input'])
-                        except EOFError:
-                            break
-
-            # Limpiar y procesar los textos
-            mensajes = [self.clean_text(mensaje) for mensaje in mensajes]
-
-            if self.tokenizer is None:
-                self.tokenizer = Tokenizer(num_words=self.num_words, oov_token="<OOV>")
-                self.tokenizer.fit_on_texts(mensajes)
-
-            # Convertir textos a secuencias
-            input_sequences = self.tokenizer.texts_to_sequences(mensajes)
-
-            # Calcular la longitud máxima de las secuencias
-            self.max_sequence_length = max([len(seq) for seq in input_sequences])
-
-            # Padding de las secuencias para que todas tengan la misma longitud
-            self.input_data = pad_sequences(input_sequences, maxlen=self.max_sequence_length, padding='post')
-
-            logging.info("[Conversar] Datos preparados correctamente para el modelo.")
-            return True
-
-        except Exception as e:
-            logging.error(f"[Conversar] Error durante la preparación de los datos: {e}")
-            return False
-
-    def clean_text(self, text):
-        """Elimina emojis, caracteres especiales, convierte a minúsculas, y normaliza espacios."""
-        
-        # Regex para eliminar emojis y algunos caracteres unicode adicionales
-        emoji_pattern = re.compile(
-            "[" u"\U0001F600-\U0001F64F"  # Emoticones
-            u"\U0001F300-\U0001F5FF"  # Símbolos y pictogramas
-            u"\U0001F680-\U0001F6FF"  # Transportes y símbolos de mapas
-            u"\U0001F1E0-\U0001F1FF"  # Banderas
-            u"\U00002702-\U000027B0"  # Otros pictogramas
-            u"\U000024C2-\U0001F251"  # Símbolos adicionales
-            "]+", flags=re.UNICODE)
-        
-        # Eliminar emojis
-        text = emoji_pattern.sub(r'', text)
-
-        # Eliminar caracteres especiales, excepto letras, números y espacios
-        text = re.sub(r'[^\w\s]', '', text)
-
-        # Reemplazar múltiples espacios por un solo espacio
-        text = re.sub(r'\s+', ' ', text)
-
-        # Convertir el texto a minúsculas y eliminar espacios extras
-        return text.strip().lower()
-
-    def tokenize_messages(self, messages):
-        try:
-            if not messages or len(messages) == 0:
-                logging.error("No se proporcionaron mensajes para tokenizar.")
-                return None
-
-            self.tokenizer = Tokenizer(oov_token="<OOV>")  # No establecer num_words aquí
-            valid_messages = [msg for msg in messages if msg.strip()]
-            self.tokenizer.fit_on_texts(valid_messages)
-
-            # Actualizar num_words después de ajustar el tokenizer
-            self.num_words = len(self.tokenizer.word_index) + 1
-
-            sequences = self.tokenizer.texts_to_sequences(valid_messages)
-            return sequences
-
-        except Exception as e:
-            logging.error(f"Error al tokenizar los mensajes: {e}")
-            return None
-
-    def generate_sequences_and_labels(self, sequences):
-        X, y = []
-
-        num_classes = self.num_words
-        if num_classes is None or num_classes <= 0:
-            logging.error("El número de clases (num_words en el tokenizer) no está definido correctamente.")
-            return None, None
-
-        try:
-            for seq_index, seq in enumerate(sequences):
-                if len(seq) == 0:
-                    continue
-
-                for i in range(1, len(seq)):
-                    input_sequence = seq[:i]
-                    target_word = seq[i] - 1  # Ajustar el índice
-
-                    input_sequence_padded = pad_sequences([input_sequence], maxlen=self.max_sequence_length)[0]
-                    X.append(input_sequence_padded)
-                    y.append(target_word)
-
-            X_np = np.array(X)
-            y_np = np.array(y)
-
-            if X_np.shape[0] == 0 or y_np.shape[0] == 0:
-                logging.error("No se generaron secuencias o etiquetas válidas.")
-                return None, None
-
-            return X_np, y_np
-
-        except Exception as e:
-            logging.error(f"Error durante la generación de secuencias y etiquetas: {e}")
-            return None, None
-
-    def train(self, epochs=10, batch_size=64, validation_split=0.2):
-        """Entrena el modelo conversacional con los mensajes de los usuarios."""
-        try:
-            logging.info("===== [Conversar] Iniciando el entrenamiento del modelo conversacional =====")
-
-            # Preparar los datos
-            logging.info("[Conversar] Preparando los datos para el entrenamiento...")
-
-            # Verificar si existe el archivo de ajuste fino
-            if not os.path.exists(self.ajuste_fino_file):
-                logging.warning(f"No se encontró el archivo '{self.ajuste_fino_file}', obteniendo datos de la base de datos.")
-                mensajes = self.db.get_all_messages()  # Obtener mensajes de la base de datos
-
-                if not mensajes:
-                    logging.error("No se encontraron mensajes en la base de datos. Abortando entrenamiento.")
-                    self.is_trained = False
-                    return
-
-                # Limpiar mensajes duplicados y vacíos
-                mensajes = list(set([mensaje.strip() for mensaje in mensajes if mensaje.strip()]))
-
-                # Guardar los mensajes en el archivo de ajuste fino para futuras ejecuciones
-                with open(self.ajuste_fino_file, 'wb') as f:
-                    pickle.dump(mensajes, f)
-                logging.info(f"Datos guardados en '{self.ajuste_fino_file}' para ajuste fino futuro.")
-            else:
-                logging.info(f"Cargando datos desde el archivo '{self.ajuste_fino_file}'.")
-                with open(self.ajuste_fino_file, 'rb') as f:
-                    mensajes = pickle.load(f)
-
-            # Limpiar y preparar los mensajes
-            cleaned_input = [self.clean_text(mensaje) for mensaje in mensajes]
-
-            # Asegurarse de que haya suficientes datos
-            if not cleaned_input:
-                logging.error("No se encontraron datos válidos para entrenar. Abortando entrenamiento.")
-                self.is_trained = False
-                return
-
-            # Tokenizar los mensajes
-            if self.tokenizer is None:
-                self.tokenizer = Tokenizer(num_words=self.num_words, oov_token="<OOV>")
-                self.tokenizer.fit_on_texts(cleaned_input)
-
-            # Convertir los textos a secuencias
-            input_sequences = self.tokenizer.texts_to_sequences(cleaned_input)
-
-            # Preparar las secuencias y etiquetas
-            X, y = [], []
-            for seq in input_sequences:
-                for i in range(1, len(seq)):
-                    X.append(seq[:i])  # Secuencia de entrada hasta el i-ésimo token
-                    y.append(seq[i])   # El token a predecir es el i-ésimo token
-
-            # Aplicar padding a las secuencias
-            self.max_sequence_length = max([len(seq) for seq in X])
-            X = pad_sequences(X, maxlen=self.max_sequence_length, padding='post')
-            y = np.array(y)
-
-            # Asegurarse de que el modelo está construido
-            if self.model is None:
-                logging.info("[Conversar] El modelo no está construido. Construyendo el modelo...")
-                self.build_model()
-
-            # Verificar que el modelo se construyó correctamente
-            if self.model is None:
-                logging.error("[Conversar] Error al construir el modelo. Abortando entrenamiento.")
-                self.is_trained = False
-                return
-
-            # Iniciar el entrenamiento
-            logging.info(f"[Conversar] Iniciando el entrenamiento del modelo con {epochs} épocas y batch_size de {batch_size}.")
-
-            # Entrenar el modelo
-            history = self.model.fit(
-                X, y,
-                batch_size=batch_size,
-                epochs=epochs,
-                validation_split=validation_split
-            )
-
-            logging.info("[Conversar] Entrenamiento completado con éxito.")
-
-            # Marcar el modelo como entrenado
-            self.is_trained = True
-            logging.info("[Conversar] El modelo ha sido marcado como entrenado.")
-
-            # **Guardar el modelo y el tokenizer actualizados**
-            self.guardar_modelo()
-
-        except Exception as e:
-            logging.error(f"[Conversar] Error durante el entrenamiento del modelo: {e}")
-            self.is_trained = False
