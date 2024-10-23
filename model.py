@@ -1196,7 +1196,7 @@ class Conversar:
 
     def verificar_compatibilidad_modelo(self):
         """Verifica si el modelo cargado tiene las capas necesarias con los nombres correctos."""
-        required_layers = ['encoder_inputs', 'encoder_lstm', 'decoder_inputs', 'decoder_embedding', 'decoder_lstm', 'decoder_dense']
+        required_layers = ['embedding', 'lstm', 'dense']  # Capas nuevas a verificar según el modelo actualizado
         existing_layers = [layer.name for layer in self.model.layers]
 
         missing_layers = [layer for layer in required_layers if layer not in existing_layers]
@@ -1206,7 +1206,6 @@ class Conversar:
         else:
             logging.info("El modelo cargado es compatible.")
             return True
-
     
     def generate_response(self, input_text):
         """Genera una respuesta usando primero GPT-4 y luego, en caso de fallo, el modelo local."""
