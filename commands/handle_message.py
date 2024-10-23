@@ -7,6 +7,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from model import Conversar, NumerologyModel  # Importar las clases necesarias
 from database import Database  # Importar la clase de base de datos
+import pickle
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, numerology_model, conversar_model, db):
     """Función para manejar cualquier mensaje de texto y generar una respuesta solo si el grupo está autorizado"""
@@ -67,7 +68,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, num
         # Extraer el primer número encontrado
         numbers = re.findall(r'\b\d+\b', user_message)
         if not numbers:
-            number_texts = {"cero": 0, "uno": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5, "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10}
+            number_texts = {
+                "cero": 0, "uno": 1, "dos": 2, "tres": 3, "cuatro": 4,
+                "cinco": 5, "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10
+            }
             word_numbers = re.findall(r'\b(?:cero|uno|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez)\b', user_message.lower())
             numbers = [str(number_texts[num]) for num in word_numbers]
         number = int(numbers[0]) if numbers else None
@@ -112,4 +116,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, num
         return
 
     response = conversar_model.generate_response(user_message)
+
+    # Almacenar la interacción en 'ajuste_fino_datos_conversar.pkl'
+    try:
+        ajustar_fino_data = {
+            'input': user_message,
+            'response': response
+        }
+        with open('ajuste_fino_datos_conversar.pkl', 'ab') as f:
+            pickle.dump(ajustar_fino_data, f)
+        logger.info("Interacción almacenada para ajuste fino.")
+    except Exception as e:
+        logger.error(f"Error al almacenar datos para ajuste fino: {e}")
+
     await update.message.reply_text(f"🤖 <b>Respuesta:</b> {response}", parse_mode='HTML')

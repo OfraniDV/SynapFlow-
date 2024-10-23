@@ -58,8 +58,6 @@ logger.addHandler(file_handler)
 
 logger.info('Bot iniciado correctamente.')
 
-
-
 # Función asíncrona para enviar errores a un canal de Telegram
 async def notify_error_to_channel(error_message):
     try:
@@ -67,7 +65,6 @@ async def notify_error_to_channel(error_message):
         logger.info(f"Error notificado al canal de Telegram {CHANNEL_ERROR_ID}")
     except Exception as e:
         logger.error(f"Error al enviar notificación al canal: {e}")
-
 
 # Manejador de errores de Telegram
 async def error_handler(update: Update, context: CallbackContext):
@@ -183,7 +180,7 @@ def main():
     conversar_model = Conversar(db)
 
     # Verificar si el modelo conversacional ya está entrenado
-    conversar_model_file = 'conversational_model.keras'
+    conversar_model_file = 'conversational_model_conversar.keras'  # Actualizado
 
     if os.path.exists(conversar_model_file):
         # Cargar el modelo conversacional si ya existe
@@ -222,8 +219,6 @@ def main():
     # Iniciar el bot
     logger.info("✅ [Main - bot.py] Iniciando el bot con polling...")
     application.run_polling()
-
-
 
 if __name__ == '__main__':
     main()
