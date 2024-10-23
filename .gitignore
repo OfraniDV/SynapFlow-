@@ -38,6 +38,6 @@ build/
 *.sublime-workspace
 
 # Archivos de modelo y datos generados que no deberían subirse
-.pkl
-.keras
+*.pkl
+*.keras
 *.log

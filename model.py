@@ -1458,6 +1458,9 @@ class Conversar:
             # Ajustar el tokenizer con los datos combinados (mensajes antiguos y nuevos)
             self.tokenizer.fit_on_texts(mensajes_totales)
 
+            # **Actualizar el tamaño del vocabulario del modelo según el tokenizer**
+            self.num_words = len(self.tokenizer.word_index) + 1
+
             # Guardar el nuevo estado de los mensajes (incluye ahora los nuevos)
             with open(self.ajuste_fino_file, 'wb') as f:
                 pickle.dump(mensajes_totales, f)
@@ -1481,10 +1484,10 @@ class Conversar:
             logger.info(f"Shape de input_data: {input_data.shape}")
             logger.info(f"Shape de target_data: {target_data.shape}")
 
-            # Asegurarse de que el modelo está construido
-            if self.model is None:
-                logger.info("[Conversar] El modelo no está construido. Construyendo el modelo...")
-                self.build_model()
+            # Asegurarse de que el modelo está construido con el tamaño correcto del vocabulario
+            if self.model is None or self.model.input_shape[1] != self.num_words:
+                logger.info("[Conversar] El modelo no está construido correctamente. Reconstruyendo el modelo con el nuevo vocabulario...")
+                self.build_model()  # Asegúrate de que build_model toma en cuenta num_words actualizado
 
             # Verificar la arquitectura del modelo
             logger.info("[Conversar] Arquitectura del modelo:")
