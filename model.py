@@ -1651,7 +1651,6 @@ class Conversar:
             logging.error(f"[Conversar] Error al construir el modelo: {e}")
             self.model = None
 
-
     def setup_inference_models(self):
         """Configura el modelo de inferencia sin el Encoder-Decoder."""
         try:
@@ -1684,19 +1683,19 @@ class Conversar:
             self.model = None
 
     def guardar_modelo(self):
-        """Guarda el modelo entrenado y el tokenizer."""
+        """Guarda el modelo y el tokenizer entrenados."""
         try:
-            # Guardar el modelo conversacional con el nombre adecuado
-            self.model.save('conversational_model_conversar.keras')
-            
-            # Guardar el tokenizer con el nombre adecuado
-            with open('tokenizer_conversar.pkl', 'wb') as f:
-                pickle.dump(self.tokenizer, f)
-                
-            logging.info("[Conversar] Modelo y tokenizer guardados exitosamente.")
-        except Exception as e:
-            logging.error(f"[Conversar] Error al guardar el modelo o el tokenizer: {e}")
+            # Guardar el modelo
+            self.model.save(self.model_filename)
+            logger.info(f"Modelo guardado exitosamente en '{self.model_filename}'.")
 
+            # Guardar el tokenizer
+            with open(self.tokenizer_filename, 'wb') as f:
+                pickle.dump(self.tokenizer, f)
+            logger.info(f"Tokenizer guardado exitosamente en '{self.tokenizer_filename}'.")
+
+        except Exception as e:
+            logger.error(f"Error al guardar el modelo o el tokenizer: {e}")
 
     def prepare_data(self):
         """Prepara los datos para el modelo secuencial de mensajes."""
