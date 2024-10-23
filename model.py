@@ -31,6 +31,8 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.utils import to_categorical
 from tensorflow.keras.layers import Layer
+from tensorflow.keras.layers import Dropout
+
 
 
 # Importaciones de Scikit-learn para procesamiento de datos
@@ -1404,7 +1406,8 @@ class Conversar:
             logging.error(f"Error inesperado al limpiar los datos para ajuste fino: {e}")
             return []
 
-    def get_last_processed_id(filename='estado_procesamiento.json'):
+    # Mover las funciones dentro de la clase
+    def get_last_processed_id(self, filename='estado_procesamiento.json'):
         """Obtiene el último ID de mensaje procesado desde el archivo de estado."""
         if os.path.exists(filename):
             with open(filename, 'r') as file:
@@ -1412,10 +1415,11 @@ class Conversar:
                 return data.get('last_processed_id', 0)
         return 0  # Si no existe el archivo, comenzamos desde ID 0
 
-    def update_last_processed_id(last_id, filename='estado_procesamiento.json'):
+    def update_last_processed_id(self, last_id, filename='estado_procesamiento.json'):
         """Actualiza el último ID de mensaje procesado en el archivo de estado."""
         with open(filename, 'w') as file:
             json.dump({'last_processed_id': last_id}, file)
+
 
     def realizar_ajuste_fino(self, epochs=2):
         """Realiza el ajuste fino del modelo conversacional utilizando los datos de ajuste fino."""
@@ -1526,7 +1530,6 @@ class Conversar:
         except Exception as e:
             logger.error(f"Error al generar la respuesta: {e}")
             return "Ocurrió un error al generar la respuesta."
-
 
     
     def post_process_response(self, response):
