@@ -22,9 +22,9 @@ def start_scheduler(numerology_model, conversar_model):
         except Exception as e:
             logging.error(f"❌ Error durante el reentrenamiento de los modelos: {e}")
 
-    # Programar el reentrenamiento y ajuste fino cada 5 minutos
-    logging.info("⏰ Programando el reentrenamiento de los modelos cada 5 minutos.")
-    schedule.every(5).minutes.do(retrain_models)
+    # Programar el reentrenamiento y ajuste fino todos los días a las 2 AM
+    logging.info("⏰ Programando el reentrenamiento de los modelos diariamente a las 2:00 AM.")
+    schedule.every().day.at("02:00").do(retrain_models)
 
     def run_scheduler():
         logging.info("✔️ El programador de tareas (scheduler) está en ejecución.")
