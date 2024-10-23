@@ -15,6 +15,9 @@ import traceback
 from telegram import Update
 from telegram.ext import CallbackContext
 
+#Importando Json para la creacion del archivo de los ajustes finos segun el tiempo
+import json
+
 # Importar otros módulos del proyecto
 from model import NumerologyModel, Conversar
 from database import Database
@@ -147,9 +150,23 @@ def register_message_handler(application, db, conversar_model, numerology_model)
     application.add_handler(message_handler)
     logger.info("MessageHandler registrado para mensajes generales.")
 
+# Verificar si el archivo estado_procesamiento.json existe
+def crear_archivo_procesamiento_si_no_existe(filename='estado_procesamiento.json'):
+    """Crea el archivo JSON de estado de procesamiento si no existe."""
+    if not os.path.exists(filename):
+        # Crear un archivo JSON vacío con la estructura básica
+        with open(filename, 'w') as file:
+            json.dump({"last_processed_id": 0}, file)
+        logger.info(f"Archivo {filename} creado con la estructura inicial.")
+    else:
+        logger.info(f"Archivo {filename} ya existe.")
+
 def main():
     # Iniciar el logger
     logger.info("🚀 [Main - bot.py] Iniciando el bot...")
+
+    # Verificar si el archivo de procesamiento existe
+    crear_archivo_procesamiento_si_no_existe()  # <- Esta línea debería estar correctamente indentada
 
     # Inicializar la base de datos
     logger.info("🗄️ [Main - bot.py] Inicializando la base de datos...")

@@ -1,4 +1,3 @@
-# scheduler.py
 import schedule
 import time
 import threading
@@ -22,16 +21,32 @@ def start_scheduler(numerology_model, conversar_model):
         except Exception as e:
             logging.error(f"❌ Error durante el reentrenamiento de los modelos: {e}")
 
-    # Programar el reentrenamiento y ajuste fino todos los días a las 2 AM
-    logging.info("⏰ Programando el reentrenamiento de los modelos diariamente a las 2:00 AM.")
-    schedule.every().day.at("02:00").do(retrain_models)
-
     def run_scheduler():
         logging.info("✔️ El programador de tareas (scheduler) está en ejecución.")
         while True:
             schedule.run_pending()
             time.sleep(1)
 
+    # Llama a realizar el ajuste fino inmediatamente cuando el bot se enciende
+    logging.info("⚡ El bot ha iniciado, verificando si es necesario realizar ajuste fino de modelos...")
+    
+    try:
+        # Verificar si hay actualizaciones necesarias para el ajuste fino del modelo conversacional
+        nuevos_mensajes = conversar_model.db.get_messages_since(conversar_model.get_last_processed_id())
+        if nuevos_mensajes:
+            logging.info("💡 Se encontraron mensajes nuevos, iniciando ajuste fino inmediatamente...")
+            conversar_model.realizar_ajuste_fino()
+        else:
+            logging.info("✅ No se encontraron mensajes nuevos. Ajuste fino no es necesario al inicio.")
+
+    except Exception as e:
+        logging.error(f"❌ Error durante la verificación inicial de ajuste fino: {e}")
+
+    # Programar el reentrenamiento y ajuste fino todos los días a las 2 AM
+    logging.info("⏰ Programando el reentrenamiento de los modelos diariamente a las 2:00 AM.")
+    schedule.every().day.at("02:00").do(retrain_models)
+
+    # Iniciar el scheduler en un hilo separado
     scheduler_thread = threading.Thread(target=run_scheduler)
     scheduler_thread.daemon = True  # Para que se detenga cuando el programa principal termine
     scheduler_thread.start()
