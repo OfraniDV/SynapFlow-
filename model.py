@@ -27,6 +27,8 @@ from tensorflow.keras.preprocessing.text import Tokenizer
 from tensorflow.keras.utils import to_categorical
 from difflib import SequenceMatcher
 
+from tensorflow.keras.layers import Input, LSTM, Dense, Embedding
+from tensorflow.keras.models import Model
 
 from dotenv import load_dotenv
 
@@ -151,9 +153,10 @@ class NumerologyModel:
                 self.extract_rules_from_formulas(formulas)
             else:
                 logging.error("[NumerologyModel] No se encontraron fórmulas al cargar el modelo.")
+                self.is_trained = False
                 return
 
-            # Marcar el modelo como cargado
+            # Marcar el modelo como cargado y entrenado
             self.is_trained = True
             logging.info("[NumerologyModel] Modelo de numerología cargado y listo para su uso.")
 
@@ -308,7 +311,6 @@ class NumerologyModel:
         except Exception as e:
             logging.error(f"Error al preprocesar etiquetas para ajuste fino: {e}")
             return None
-
 
     def prepare_data(self):
         # Obtener todas las fórmulas desde la tabla logsfirewallids
@@ -832,7 +834,6 @@ class NumerologyModel:
             logging.error(f"[NumerologyModel] Error durante el entrenamiento del modelo: {e}")
             self.is_trained = False
 
-
     def predict(self, input_number):
         # Usar mapeo directo si existe
         if input_number in self.mapping:
@@ -1016,27 +1017,32 @@ class Conversar:
         """
         if db is None or not hasattr(db, 'get_all_messages'):
             raise ValueError("La conexión a la base de datos no está configurada correctamente o es inválida.")
-        
+
         self.db = db  # Conexión a la base de datos
-        
+
         # Inicialización del modelo y tokenizer (se cargarán más tarde)
         self.model = None
         self.tokenizer = None
-        
+
+        # Variables para los modelos de inferencia
+        self.encoder_model = None
+        self.decoder_model = None
+
         # Variable que indica si el modelo está entrenado
         self.is_trained = False
-        
-        # Longitud máxima de las secuencias de entrada
-        self.max_sequence_length = 100
-        
+
+        # Longitud máxima de las secuencias de entrada y salida
+        self.max_encoder_seq_length = 20
+        self.max_decoder_seq_length = 20
+
+        # Tamaño de la capa LSTM
+        self.latent_dim = 256
+
         # Límite de vocabulario a las 10,000 palabras más frecuentes
         self.num_words = 10000
-        
-        # Conjunto para almacenar los mensajes únicos procesados
-        self.processed_messages = set()
 
         # Cargar el modelo y el tokenizer si están disponibles
-        self.cargar_modelo_y_tokenizer()
+        self.cargar_modelo()
 
         # Validar si el modelo y el tokenizer se cargaron correctamente
         if self.model and self.tokenizer:
@@ -1045,6 +1051,7 @@ class Conversar:
         else:
             self.is_trained = False
             logging.warning("Modelo o tokenizer no cargados. Entrenamiento será necesario.")
+
     
     def cargar_modelo_y_tokenizer(self):
         """Carga el modelo conversacional y el tokenizer."""
@@ -1077,38 +1084,53 @@ class Conversar:
             self.is_trained = False
 
     def cargar_modelo(self):
-        """Carga el modelo conversacional y el tokenizer."""
+        """Carga el modelo conversacional y el tokenizer, y verifica si es compatible."""
         try:
             start_time = time.time()
-            
-            # Intentar cargar el modelo de la red neuronal desde el archivo
             logging.info("Intentando cargar el modelo conversacional desde 'conversational_model.keras'...")
-            self.model = tf.keras.models.load_model('conversational_model.keras')
-            logging.info(f"Modelo conversacional cargado exitosamente. Tiempo de carga: {time.time() - start_time:.2f} segundos.")
-            print(f"[INFO] Modelo conversacional cargado exitosamente en {time.time() - start_time:.2f} segundos.")
+            self.model = tf.keras.models.load_model('conversational_model.keras', compile=False)
+            logging.info(f"Modelo conversacional cargado exitosamente en {time.time() - start_time:.2f} segundos.")
+
+            # Verificar que el modelo no es None
+            if self.model is None:
+                logging.error("El modelo no se cargó correctamente. self.model es None.")
+                self.is_trained = False
+                return
 
             # Intentar cargar el tokenizer desde el archivo
             logging.info("Intentando cargar el tokenizer desde 'tokenizer.pkl'...")
             with open('tokenizer.pkl', 'rb') as f:
                 self.tokenizer = pickle.load(f)
-            
-            if self.tokenizer:
-                logging.info("Tokenizer cargado exitosamente.")
-                print("[INFO] Tokenizer cargado exitosamente.")
-            else:
-                logging.warning("El tokenizer no se cargó correctamente.")
-                print("[WARNING] El tokenizer no se cargó correctamente.")
-            
+            logging.info("Tokenizer cargado exitosamente.")
+
+            # Verificar si el modelo es compatible
+            if not self.verificar_compatibilidad_modelo():
+                logging.error("El modelo cargado no es compatible con el código actual.")
+                self.is_trained = False
+                return
+
+            # Configurar los modelos de inferencia
+            self.setup_inference_models()
+
             # Indicar que el modelo ha sido cargado y está listo para usarse
             self.is_trained = True
             logging.info("El modelo y el tokenizer están listos para usarse.")
-            print("[INFO] El modelo y el tokenizer están listos para usarse.")
-
         except Exception as e:
-            # Registrar el error en los logs y mostrarlo en consola
             logging.error(f"Error al cargar el modelo o el tokenizer: {e}")
-            print(f"[ERROR] Error al cargar el modelo o el tokenizer: {e}")
             self.is_trained = False
+
+    def verificar_compatibilidad_modelo(self):
+        """Verifica si el modelo cargado tiene las capas necesarias con los nombres correctos."""
+        required_layers = ['encoder_inputs', 'encoder_lstm', 'decoder_inputs', 'decoder_embedding', 'decoder_lstm', 'decoder_dense']
+        existing_layers = [layer.name for layer in self.model.layers]
+
+        missing_layers = [layer for layer in required_layers if layer not in existing_layers]
+        if missing_layers:
+            logging.error(f"Faltan las siguientes capas necesarias en el modelo: {missing_layers}")
+            return False
+        else:
+            logging.info("El modelo cargado es compatible.")
+            return True
     
     def generate_response(self, input_text):
         """Genera una respuesta usando primero GPT-4 y luego, en caso de fallo, el modelo local."""
@@ -1345,12 +1367,16 @@ class Conversar:
 
     def model_generate_response(self, input_text):
         """Genera una respuesta utilizando el modelo Encoder-Decoder en modo inferencia."""
+        logger = logging.getLogger(__name__)
         logger.info(f"Generando respuesta local para el mensaje: {input_text}")
 
         # Verificar si los modelos de inferencia están configurados
-        if not hasattr(self, 'encoder_model') or not hasattr(self, 'decoder_model'):
+        if not hasattr(self, 'encoder_model') or not hasattr(self, 'decoder_model') or self.encoder_model is None or self.decoder_model is None:
             logger.info("Configurando modelos de inferencia para el Encoder-Decoder.")
             self.setup_inference_models()
+            if self.encoder_model is None or self.decoder_model is None:
+                logger.error("No se pudieron configurar los modelos de inferencia.")
+                return "Error al configurar los modelos de inferencia."
 
         # Preprocesar el texto de entrada
         input_seq = self.tokenizer.texts_to_sequences([self.clean_text(input_text)])
@@ -1360,7 +1386,8 @@ class Conversar:
         states_value = self.encoder_model.predict(input_seq)
 
         # Generar la respuesta palabra por palabra
-        target_seq = np.array([[self.tokenizer.word_index['<start>']]])
+        target_seq = np.array([[self.tokenizer.word_index.get('<start>', 1)]])
+
         stop_condition = False
         decoded_sentence = ''
 
@@ -1371,7 +1398,7 @@ class Conversar:
             sampled_token_index = np.argmax(output_tokens[0, -1, :])
             sampled_word = self.tokenizer.index_word.get(sampled_token_index, '')
 
-            if sampled_word == '<end>' or len(decoded_sentence.split()) > self.max_decoder_seq_length:
+            if (sampled_word == '<end>' or len(decoded_sentence.split()) > self.max_decoder_seq_length):
                 stop_condition = True
             else:
                 decoded_sentence += ' ' + sampled_word
@@ -1383,6 +1410,7 @@ class Conversar:
             states_value = [h, c]
 
         return decoded_sentence.strip()
+
 
     
     def post_process_response(self, response):
@@ -1435,40 +1463,50 @@ class Conversar:
     def build_model(self):
         """Construye el modelo Encoder-Decoder para el entrenamiento."""
         try:
-            logger.info("[Conversar] Construyendo el modelo Encoder-Decoder...")
+            logging.info("[Conversar] Construyendo el modelo Encoder-Decoder...")
 
             # Tamaño del vocabulario y dimensiones
             vocab_size = len(self.tokenizer.word_index) + 1
             embedding_dim = 256
-            latent_dim = 256
+            latent_dim = self.latent_dim
 
             # Encoder
             encoder_inputs = Input(shape=(None,), name='encoder_inputs')
-            enc_emb = Embedding(input_dim=vocab_size, output_dim=embedding_dim, mask_zero=True, name='encoder_embedding')(encoder_inputs)
-            encoder_outputs, state_h, state_c = LSTM(latent_dim, return_state=True, name='encoder_lstm')(enc_emb)
-            encoder_states = [state_h, state_c]
+            encoder_embedding = Embedding(input_dim=vocab_size, output_dim=embedding_dim, mask_zero=True, name='encoder_embedding')(encoder_inputs)
+            encoder_lstm = LSTM(latent_dim, return_state=True, name='encoder_lstm')
+            encoder_outputs, state_h_enc, state_c_enc = encoder_lstm(encoder_embedding)
+            encoder_states = [state_h_enc, state_c_enc]
 
             # Decoder
             decoder_inputs = Input(shape=(None,), name='decoder_inputs')
-            dec_emb = Embedding(input_dim=vocab_size, output_dim=embedding_dim, mask_zero=True, name='decoder_embedding')(decoder_inputs)
+            decoder_embedding = Embedding(input_dim=vocab_size, output_dim=embedding_dim, mask_zero=True, name='decoder_embedding')(decoder_inputs)
             decoder_lstm = LSTM(latent_dim, return_sequences=True, return_state=True, name='decoder_lstm')
-            decoder_outputs, _, _ = decoder_lstm(dec_emb, initial_state=encoder_states)
-
-            # Capa de salida
+            decoder_outputs, _, _ = decoder_lstm(decoder_embedding, initial_state=encoder_states)
             decoder_dense = Dense(vocab_size, activation='softmax', name='decoder_dense')
             decoder_outputs = decoder_dense(decoder_outputs)
 
             # Modelo de entrenamiento
-            self.model = Model([encoder_inputs, decoder_inputs], decoder_outputs, name='training_model')
+            self.model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
 
             # Compilar el modelo
             self.model.compile(optimizer='rmsprop', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
-            logger.info("[Conversar] Modelo Encoder-Decoder construido y compilado exitosamente.")
+            logging.info("[Conversar] Modelo Encoder-Decoder construido y compilado exitosamente.")
 
         except Exception as e:
-            logger.error(f"[Conversar] Error al construir el modelo: {e}")
+            logging.error(f"[Conversar] Error al construir el modelo: {e}")
             self.model = None
+
+
+    def guardar_modelo(self):
+        """Guarda el modelo entrenado y el tokenizer."""
+        try:
+            self.model.save('conversational_model.keras')
+            with open('tokenizer.pkl', 'wb') as f:
+                pickle.dump(self.tokenizer, f)
+            logging.info("[Conversar] Modelo y tokenizer guardados exitosamente.")
+        except Exception as e:
+            logging.error(f"[Conversar] Error al guardar el modelo o el tokenizer: {e}")
 
 
     def prepare_data(self):
@@ -1481,6 +1519,7 @@ class Conversar:
 
             ajuste_fino_file = 'ajuste_fino_datos.pkl'
             if os.path.exists(ajuste_fino_file):
+                logging.info("Cargando datos de ajuste fino desde 'ajuste_fino_datos.pkl'.")
                 with open(ajuste_fino_file, 'rb') as f:
                     try:
                         while True:
@@ -1494,12 +1533,37 @@ class Conversar:
                     except pickle.UnpicklingError as e:
                         logging.error(f"Error al deserializar datos del archivo {ajuste_fino_file}: {e}")
             else:
-                logging.error("No se encontró el archivo de datos para ajuste fino.")
-                return None
+                logging.warning("No se encontró el archivo de datos para ajuste fino 'ajuste_fino_datos.pkl'.")
 
+            # Si no hay datos en ajuste_fino_datos.pkl, intentar obtener datos de la base de datos
             if not data_pairs:
-                logging.error("No se encontraron pares de datos para preparar.")
-                return None
+                logging.warning("No se encontraron datos de ajuste fino. Obteniendo datos de la base de datos.")
+                messages = self.db.get_all_messages()
+                if messages:
+                    logging.info(f"Se encontraron {len(messages)} mensajes en la base de datos.")
+                    for msg in messages:
+                        # Suponiendo que 'msg' es un diccionario con 'input' y 'response'
+                        if 'input' in msg and 'response' in msg:
+                            data_pairs.append((msg['input'], msg['response']))
+                        else:
+                            logging.warning(f"Mensaje inválido encontrado en la base de datos: {msg}")
+                else:
+                    logging.warning("No se encontraron mensajes en la base de datos.")
+
+            # Si aún no hay datos, utilizar datos iniciales por defecto
+            if not data_pairs:
+                logging.warning("No hay datos disponibles para entrenar el modelo. Usando datos iniciales por defecto.")
+                data_pairs = [
+                    ('hola', '<start> hola, ¿cómo estás? <end>'),
+                    ('¿cuál es tu nombre?', '<start> soy un bot de conversación. <end>'),
+                    ('¿qué puedes hacer?', '<start> puedo ayudarte con información y responder tus preguntas. <end>'),
+                    # Agrega más pares de entrada-respuesta según sea necesario
+                ]
+
+            # Verificar si finalmente tenemos datos para preparar
+            if not data_pairs:
+                logging.error("No se pudieron obtener datos para entrenar el modelo.")
+                return False
 
             logging.info(f"Se encontraron {len(data_pairs)} pares de datos para preparar.")
 
@@ -1554,8 +1618,7 @@ class Conversar:
 
         except Exception as e:
             logging.error(f"Error durante la preparación de los datos: {e}")
-            return None
-
+            return False
 
     def clean_text(self, text):
         """Elimina emojis, caracteres especiales, convierte a minúsculas, y normaliza espacios."""
@@ -1646,12 +1709,19 @@ class Conversar:
             data_prepared = self.prepare_data()
             if not data_prepared:
                 logging.error("[Conversar] Error en la preparación de datos. Abortando entrenamiento.")
+                self.is_trained = False
                 return
 
             # Asegurarse de que el modelo está construido
             if self.model is None:
                 logging.info("[Conversar] El modelo no está construido. Construyendo el modelo...")
                 self.build_model()
+
+            # Verificar que el modelo se construyó correctamente
+            if self.model is None:
+                logging.error("[Conversar] Error al construir el modelo. Abortando entrenamiento.")
+                self.is_trained = False
+                return
 
             # Iniciar el entrenamiento
             logging.info(f"[Conversar] Iniciando el entrenamiento del modelo con {epochs} épocas y batch_size de {batch_size}.")
@@ -1678,29 +1748,50 @@ class Conversar:
             logging.error(f"[Conversar] Error durante el entrenamiento del modelo: {e}")
             self.is_trained = False
 
-
     def setup_inference_models(self):
-        """Configura los modelos de inferencia para la generación de respuestas."""
-        # Encoder
-        encoder_inputs = self.model.input[0]  # Entrada del encoder
-        encoder_embedding = self.model.get_layer('encoder_embedding')(encoder_inputs)
-        encoder_outputs, state_h_enc, state_c_enc = self.model.get_layer('encoder_lstm')(encoder_embedding)
-        self.encoder_model = Model(encoder_inputs, [state_h_enc, state_c_enc])
+        """Configura los modelos de inferencia para el Encoder y el Decoder."""
+        try:
+            # Obtener las entradas del encoder
+            logging.info("Obteniendo las entradas y estados del encoder")
+            encoder_inputs = self.model.input[0]  # Entrada del encoder
+            encoder_outputs, state_h_enc, state_c_enc = self.model.get_layer('encoder_lstm').output
+            encoder_states = [state_h_enc, state_c_enc]
 
-        # Decoder
-        decoder_inputs = self.model.input[1]  # Entrada del decoder
-        decoder_state_input_h = Input(shape=(256,), name='decoder_state_input_h')
-        decoder_state_input_c = Input(shape=(256,), name='decoder_state_input_c')
-        decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+            # Definir el modelo del encoder para inferencia
+            self.encoder_model = tf.keras.Model(encoder_inputs, encoder_states)
 
-        decoder_embedding = self.model.get_layer('decoder_embedding')(decoder_inputs)
-        decoder_lstm = self.model.get_layer('decoder_lstm')
-        decoder_outputs, state_h_dec, state_c_dec = decoder_lstm(
-            decoder_embedding, initial_state=decoder_states_inputs)
-        decoder_states = [state_h_dec, state_c_dec]
-        decoder_dense = self.model.get_layer('decoder_dense')
-        decoder_outputs = decoder_dense(decoder_outputs)
+            # Configuración del decoder para inferencia
+            logging.info("Obteniendo las entradas del decoder")
+            decoder_inputs = self.model.input[1]  # Entrada del decoder
 
-        self.decoder_model = Model(
-            [decoder_inputs] + decoder_states_inputs,
-            [decoder_outputs] + decoder_states)
+            # Estados iniciales del decoder (entradas)
+            decoder_state_input_h = tf.keras.Input(shape=(self.latent_dim,), name='decoder_state_input_h')
+            decoder_state_input_c = tf.keras.Input(shape=(self.latent_dim,), name='decoder_state_input_c')
+            decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+
+            # Embedding del decoder
+            decoder_embedding_layer = self.model.get_layer('decoder_embedding')
+            decoder_embedding = decoder_embedding_layer(decoder_inputs)
+
+            # LSTM del decoder con estados iniciales
+            decoder_lstm_layer = self.model.get_layer('decoder_lstm')
+            decoder_outputs, state_h_dec, state_c_dec = decoder_lstm_layer(
+                decoder_embedding, initial_state=decoder_states_inputs
+            )
+            decoder_states = [state_h_dec, state_c_dec]
+
+            # Capa densa de salida
+            decoder_dense_layer = self.model.get_layer('decoder_dense')
+            decoder_outputs = decoder_dense_layer(decoder_outputs)
+
+            # Definir el modelo del decoder para inferencia
+            self.decoder_model = tf.keras.Model(
+                [decoder_inputs] + decoder_states_inputs,
+                [decoder_outputs] + decoder_states
+            )
+
+            logging.info("Modelos de inferencia configurados exitosamente.")
+        except Exception as e:
+            logging.error(f"Error al configurar los modelos de inferencia: {e}")
+            self.encoder_model = None
+            self.decoder_model = None

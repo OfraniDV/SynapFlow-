@@ -8,11 +8,6 @@ from telegram.ext import ContextTypes
 from model import Conversar, NumerologyModel  # Importar las clases necesarias
 from database import Database  # Importar la clase de base de datos
 
-# Inicializar la base de datos
-db = Database()  # Esto puede cambiar según cómo estés configurando tu DB
-conversar_model = Conversar(db)  # Tu modelo de conversación
-numerology_model = NumerologyModel(db)  # Tu modelo de numerología
-
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE, numerology_model, conversar_model, db):
     """Función para manejar cualquier mensaje de texto y generar una respuesta solo si el grupo está autorizado"""
     logger = logging.getLogger(__name__)

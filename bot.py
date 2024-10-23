@@ -32,29 +32,32 @@ CHANNEL_ERROR_ID = os.getenv('CHANNEL_ERROR_ID')  # ID del canal de error
 bot = telegram.Bot(token=BOT_TOKEN)
 
 # Configuración del logger
+import codecs
+
 log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 date_format = '%Y-%m-%d %H:%M:%S'
 logger = logging.getLogger(__name__)
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 logger.setLevel(log_level)
 
-# Manejador para la consola
+# Manejador para la consola con codificación UTF-8
 console_handler = logging.StreamHandler()
 console_handler.setLevel(log_level)
-console_formatter = logging.Formatter(log_format, datefmt=date_format)
-console_handler.setFormatter(console_formatter)
+console_handler.setFormatter(logging.Formatter(log_format, datefmt=date_format))
+# Establecer la codificación a UTF-8
+console_handler.stream = codecs.getwriter('utf-8')(console_handler.stream.buffer)
 
-# Manejador para archivo de log
-file_handler = logging.FileHandler('bot_errors.log', mode='a')
+# Manejador para archivo de log con codificación UTF-8
+file_handler = logging.FileHandler('bot_errors.log', mode='a', encoding='utf-8')
 file_handler.setLevel(log_level)
-file_formatter = logging.Formatter(log_format, datefmt=date_format)
-file_handler.setFormatter(file_formatter)
+file_handler.setFormatter(logging.Formatter(log_format, datefmt=date_format))
 
 # Agregar manejadores al logger
 logger.addHandler(console_handler)
 logger.addHandler(file_handler)
 
 logger.info('Bot iniciado correctamente.')
+
 
 
 # Función asíncrona para enviar errores a un canal de Telegram
@@ -114,13 +117,15 @@ def load_commands(application, db, numerology_model, conversar_model):
                 if hasattr(module, command_name):
                     command_function = getattr(module, command_name)
 
-                    # Agregar 'feedback' a la lista de comandos que solo necesitan `db`
-                    if command_name in ['lsgroup', 'addgroup', 'delgroup', 'feedback', 'charada', 'queda']:
+                    # Lista de comandos que solo necesitan `db`
+                    commands_with_db_only = ['lsgroup', 'addgroup', 'delgroup', 'feedback', 'charada', 'queda']
+
+                    if command_name in commands_with_db_only:
                         # Comandos que solo necesitan `db`
                         application.add_handler(CommandHandler(command_name, partial(command_function, db=db)))
                     else:
-                        # Comandos que necesitan `db`, `model`, y `conversar_model`
-                        application.add_handler(CommandHandler(command_name, partial(command_function, db=db, model=numerology_model, conversar_model=conversar_model)))
+                        # Comandos que necesitan `db`, `numerology_model`, y `conversar_model`
+                        application.add_handler(CommandHandler(command_name, partial(command_function, db=db, numerology_model=numerology_model, conversar_model=conversar_model)))
 
                     logger.info(f"Comando /{command_name} registrado exitosamente.")
                 else:
@@ -130,7 +135,6 @@ def load_commands(application, db, numerology_model, conversar_model):
                 logger.error(f"Error al importar el módulo {module_path}: {e}", exc_info=True)
             except Exception as e:
                 logger.error(f"Error al registrar el comando /{command_name} del archivo {filename}: {e}", exc_info=True)
-
 
 def register_message_handler(application, db, conversar_model, numerology_model):
     """Registra el MessageHandler para manejar mensajes de texto generales"""
@@ -145,49 +149,78 @@ def register_message_handler(application, db, conversar_model, numerology_model)
     application.add_handler(message_handler)
     logger.info("MessageHandler registrado para mensajes generales.")
 
-
-
 def main():
-    logger.info("Iniciando el bot...")
+    # Iniciar el logger
+    logger.info("🚀 [Main - bot.py] Iniciando el bot...")
 
     # Inicializar la base de datos
+    logger.info("🗄️ [Main - bot.py] Inicializando la base de datos...")
     db = Database()
 
     # Inicializar el modelo de numerología
+    logger.info("🔢 [Main - bot.py] Inicializando el modelo de numerología...")
     numerology_model = NumerologyModel(db)
 
-    # Verificar si el modelo de numerología ya está entrenado (comprobando si existe el archivo del modelo guardado)
-    model_file = 'numerology_model.keras'  # Nombre correcto del modelo de numerología
+    # Verificar si el modelo de numerología ya está entrenado
+    numerology_model_file = 'numerology_model.keras'
 
-    if os.path.exists(model_file):
-        logger.info(f"Modelo de numerología preentrenado encontrado: {model_file}. Cargando el modelo...")
-        numerology_model.load(model_file)  # Cargar el modelo desde el archivo
+    if os.path.exists(numerology_model_file):
+        logger.info(f"🟢 [Main - bot.py] Modelo de numerología preentrenado encontrado: {numerology_model_file}. Cargando el modelo...")
+        numerology_model.load(numerology_model_file)
     else:
-        logger.info("No se encontró un modelo de numerología preentrenado. Entrenando el modelo desde cero...")
-        numerology_model.train()  # Entrenar el modelo
-        numerology_model.save(model_file)  # Guardar el modelo después de entrenarlo
+        logger.info("🟡 [Main - bot.py] No se encontró un modelo de numerología preentrenado.")
+        numerology_model.train()
+        numerology_model.save(numerology_model_file)
 
-    # Inicializar y cargar el modelo de conversación
+    # Verificar nuevamente si el modelo de numerología está entrenado
+    if not numerology_model.is_trained:
+        logger.error("🔴 [Main - bot.py] El modelo de numerología no se pudo entrenar. Por favor, verifica los pasos de entrenamiento.")
+        return
+
+    # Inicializar el modelo de conversación
+    logger.info("💬 [Main - bot.py] Inicializando el modelo de conversación...")
     conversar_model = Conversar(db)
-    conversar_model.cargar_modelo()
+
+    # Verificar si el modelo conversacional ya está entrenado
+    conversar_model_file = 'conversational_model.keras'
+
+    if os.path.exists(conversar_model_file):
+        logger.info(f"🟢 [Main - bot.py] Modelo conversacional preentrenado encontrado: {conversar_model_file}. Cargando el modelo...")
+        conversar_model.cargar_modelo()
+    else:
+        logger.info("🟡 [Main - bot.py] No se encontró un modelo conversacional preentrenado.")
+        conversar_model.train()
+        conversar_model.guardar_modelo()
+
+    # Si el modelo no está entrenado después de cargar o entrenar, mostrar error
+    if not conversar_model.is_trained:
+        logger.error("🔴 [Main - bot.py] El modelo conversacional no se pudo entrenar o cargar. Por favor, verifica los pasos de entrenamiento.")
+        return
 
     # Crear la aplicación de Telegram
+    logger.info("🤖 [Main - bot.py] Creando la aplicación de Telegram...")
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
     # Cargar los comandos dinámicamente desde la carpeta "commands"
+    logger.info("📦 [Main - bot.py] Cargando comandos...")
     load_commands(application, db, numerology_model, conversar_model)
 
     # Registrar el MessageHandler para mensajes de texto generales
+    logger.info("📨 [Main - bot.py] Registrando manejador de mensajes generales...")
     register_message_handler(application, db, conversar_model, numerology_model)
 
     # Agregar manejador de errores global
+    logger.info("🛠️ [Main - bot.py] Agregando manejador de errores global...")
     application.add_error_handler(error_handler)
 
     # Iniciar el scheduler para el reentrenamiento periódico
+    logger.info("⏰ [Main - bot.py] Iniciando el scheduler para reentrenamiento periódico...")
     start_scheduler(numerology_model, conversar_model)
 
     # Iniciar el bot
+    logger.info("✅ [Main - bot.py] Iniciando el bot con polling...")
     application.run_polling()
+
 
 
 if __name__ == '__main__':

@@ -9,9 +9,9 @@ import os
 
 logger = logging.getLogger(__name__)
 
-async def synap(update: Update, context: ContextTypes.DEFAULT_TYPE, db, model, conversar_model):
+async def synap(update: Update, context: ContextTypes.DEFAULT_TYPE, db, numerology_model, conversar_model):
     logger.info(f"Comando /synap recibido de {update.message.from_user.username}")
-    
+
     # Obtener el ID del grupo VIP desde las variables de entorno
     VIP_GROUP_ID = os.getenv('VIP_GROUP_ID')
 
@@ -55,7 +55,7 @@ async def synap(update: Update, context: ContextTypes.DEFAULT_TYPE, db, model, c
 
     # Continuar con el proceso habitual si el grupo está activado
     # Verificar si el modelo de numerología está entrenado
-    if not model.is_trained:
+    if not numerology_model.is_trained:
         await update.message.reply_text('⚠️ El modelo de predicciones no está disponible en este momento.', parse_mode='HTML')
         return
 
@@ -72,7 +72,7 @@ async def synap(update: Update, context: ContextTypes.DEFAULT_TYPE, db, model, c
     input_number = int(match.group())
 
     try:
-        vip_message = model.create_vip_message(input_number)
+        vip_message = numerology_model.create_vip_message(input_number)
         if not vip_message:
             await update.message.reply_text('No se pudieron generar recomendaciones en este momento.', parse_mode='HTML')
             return
