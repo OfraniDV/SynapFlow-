@@ -15,6 +15,8 @@ import pandas as pd
 from difflib import SequenceMatcher
 from dotenv import load_dotenv  # Para cargar variables de entorno
 
+import json
+
 # Importaciones de spaCy para procesamiento de lenguaje natural
 import spacy
 nlp = spacy.load("es_core_news_md")  # Modelo de lenguaje en español
@@ -1402,48 +1404,48 @@ class Conversar:
             logging.error(f"Error inesperado al limpiar los datos para ajuste fino: {e}")
             return []
 
+    def get_last_processed_id(filename='estado_procesamiento.json'):
+        """Obtiene el último ID de mensaje procesado desde el archivo de estado."""
+        if os.path.exists(filename):
+            with open(filename, 'r') as file:
+                data = json.load(file)
+                return data.get('last_processed_id', 0)
+        return 0  # Si no existe el archivo, comenzamos desde ID 0
+
+    def update_last_processed_id(last_id, filename='estado_procesamiento.json'):
+        """Actualiza el último ID de mensaje procesado en el archivo de estado."""
+        with open(filename, 'w') as file:
+            json.dump({'last_processed_id': last_id}, file)
+
     def realizar_ajuste_fino(self, epochs=2):
         """Realiza el ajuste fino del modelo conversacional utilizando los datos de ajuste fino."""
         logger.info("[Conversar] Iniciando el ajuste fino del modelo conversacional.")
 
         try:
-            # Nombre del archivo de ajuste fino para el modelo conversacional
-            ajuste_fino_file = self.ajuste_fino_file
+            # Obtener el último ID procesado desde el archivo
+            last_processed_id = get_last_processed_id()
 
-            # Verificar si el archivo de ajuste fino existe
-            if not os.path.exists(ajuste_fino_file):
-                logger.warning(f"[Conversar] No se encontró el archivo de ajuste fino '{ajuste_fino_file}'.")
-                return  # No se puede proceder sin datos de ajuste fino
+            # Obtener todos los mensajes nuevos desde el último ID procesado
+            nuevos_mensajes = self.db.get_messages_since(last_processed_id)  # Suponiendo que tienes esta función
 
-            # Preparar los datos del archivo de ajuste fino
-            data_pairs = []
-            with open(ajuste_fino_file, 'rb') as f:
-                try:
-                    while True:
-                        data = pickle.load(f)
-                        if 'input' in data and 'response' in data:
-                            data_pairs.append((data['input'], data['response']))
-                        else:
-                            logger.warning(f"[Conversar] Datos inválidos encontrados en el archivo: {data}")
-                except EOFError:
-                    pass  # Fin del archivo alcanzado
-                except pickle.UnpicklingError as e:
-                    logger.error(f"[Conversar] Error al deserializar datos del archivo '{ajuste_fino_file}': {e}")
-                    return
-
-            if not data_pairs:
-                logger.warning("[Conversar] No se encontraron datos de ajuste fino válidos.")
+            if not nuevos_mensajes:
+                logger.info("[Conversar] No se encontraron mensajes nuevos para el ajuste fino.")
                 return
 
-            # Actualizar el tokenizer y preparar los datos
-            input_texts = []
-            target_texts = []
+            data_pairs = []
+            for mensaje in nuevos_mensajes:
+                input_text = self.clean_text(mensaje['mensaje'])  # Aquí limpias el mensaje
+                response = "<start> " + input_text + " <end>"
+                data_pairs.append((input_text, response))
 
-            for input_text, target_text in data_pairs:
-                input_texts.append(self.clean_text(input_text))
-                target_texts.append('<start> ' + self.clean_text(target_text) + ' <end>')
+            if not data_pairs:
+                logger.warning("[Conversar] No se encontraron datos válidos para el ajuste fino.")
+                return
 
-            # **Cargar el tokenizer existente si no está inicializado**
+            input_texts = [input_text for input_text, _ in data_pairs]
+            target_texts = [target_text for _, target_text in data_pairs]
+
+            # **Actualizar el tokenizer existente o crear uno nuevo**
             if self.tokenizer is None:
                 try:
                     with open(self.tokenizer_filename, 'rb') as f:
@@ -1483,12 +1485,11 @@ class Conversar:
                 validation_split=0.2
             )
 
+            # Actualizar el ID procesado en el archivo
+            update_last_processed_id(nuevos_mensajes[-1]['id'])
+
             logger.info("[Conversar] Ajuste fino completado exitosamente.")
-
-            # Actualizar los modelos de inferencia después del ajuste fino
             self.setup_inference_models()
-
-            # **Guardar el modelo y el tokenizer actualizados**
             self.guardar_modelo()
 
         except Exception as e:
@@ -1496,52 +1497,36 @@ class Conversar:
 
 
     def model_generate_response(self, input_text):
-        """Genera una respuesta utilizando el modelo Encoder-Decoder en modo inferencia."""
+        """Genera una respuesta utilizando un modelo secuencial en lugar del Encoder-Decoder."""
         logger = logging.getLogger(__name__)
         logger.info(f"Generando respuesta local para el mensaje: {input_text}")
 
-        # Verificar si los modelos de inferencia están configurados
-        if not hasattr(self, 'encoder_model') or not hasattr(self, 'decoder_model') or self.encoder_model is None or self.decoder_model is None:
-            logger.info("Configurando modelos de inferencia para el Encoder-Decoder.")
-            self.setup_inference_models()
-            if self.encoder_model is None or self.decoder_model is None:
-                logger.error("No se pudieron configurar los modelos de inferencia.")
-                return "Error al configurar los modelos de inferencia."
-
         # Preprocesar el texto de entrada
         input_seq = self.tokenizer.texts_to_sequences([self.clean_text(input_text)])
-        input_seq = pad_sequences(input_seq, maxlen=self.max_encoder_seq_length, padding='post')
+        input_seq = pad_sequences(input_seq, maxlen=self.max_sequence_length, padding='post')
 
-        # Obtener las salidas y estados del encoder
-        encoder_outputs, state_h, state_c = self.encoder_model.predict(input_seq)
+        # Verificar si el modelo está cargado y entrenado
+        if not self.model or not self.is_trained:
+            logger.error("El modelo no está entrenado o no ha sido cargado correctamente.")
+            return "Error: El modelo no está listo para generar respuestas."
 
-        # Inicializar la secuencia del decoder
-        target_seq = np.array([[self.tokenizer.word_index.get('<start>', 1)]])
+        # Realizar la predicción usando el modelo secuencial
+        try:
+            prediction = self.model.predict(input_seq)
+            predicted_word_index = np.argmax(prediction, axis=-1)[0]
+            predicted_word = self.tokenizer.index_word.get(predicted_word_index, '')
 
-        stop_condition = False
-        decoded_sentence = ''
-
-        while not stop_condition:
-            output_tokens, h, c = self.decoder_model.predict(
-                [target_seq, encoder_outputs, state_h, state_c]
-            )
-
-            # Obtener la palabra más probable
-            sampled_token_index = np.argmax(output_tokens[0, -1, :])
-            sampled_word = self.tokenizer.index_word.get(sampled_token_index, '')
-
-            if (sampled_word == '<end>' or len(decoded_sentence.split()) > self.max_decoder_seq_length):
-                stop_condition = True
+            # Si el modelo generó una palabra válida, retornarla
+            if predicted_word:
+                return predicted_word
             else:
-                decoded_sentence += ' ' + sampled_word
+                logger.error("No se generó una respuesta válida.")
+                return "No se pudo generar una respuesta."
 
-            # Actualizar la secuencia de entrada del decoder
-            target_seq = np.array([[sampled_token_index]])
+        except Exception as e:
+            logger.error(f"Error al generar la respuesta: {e}")
+            return "Ocurrió un error al generar la respuesta."
 
-            # Actualizar los estados
-            state_h, state_c = h, c
-
-        return decoded_sentence.strip()
 
     
     def post_process_response(self, response):
@@ -1628,58 +1613,25 @@ class Conversar:
 
 
     def setup_inference_models(self):
-        """Configura los modelos de inferencia para el Encoder y el Decoder."""
+        """Configura los modelos de inferencia sin el Encoder-Decoder."""
         try:
-            # Dimensión latente ajustada (el doble por la LSTM bidireccional)
+            # Dimensión latente ajustada (LSTM units)
             latent_dim = 512
-            decoder_latent_dim = latent_dim * 2
 
-            # Encoder - Modelo de inferencia
-            encoder_inputs = self.model.input[0]  # Entrada del encoder en el modelo de entrenamiento
-            encoder_embedding = self.model.get_layer('encoder_embedding')(encoder_inputs)
-            encoder_outputs, forward_h, forward_c, backward_h, backward_c = self.model.get_layer('bidirectional').output
-            state_h_enc = Concatenate()([forward_h, backward_h])
-            state_c_enc = Concatenate()([forward_c, backward_c])
-            encoder_states = [state_h_enc, state_c_enc]
-            self.encoder_model = Model(encoder_inputs, [encoder_outputs] + encoder_states)
-            logging.info("[Conversar] Modelo de inferencia del encoder configurado.")
+            # Este es un modelo simple que no requiere la lógica de encoder y decoder.
+            # Dependiendo de tu arquitectura, podrías ajustar aquí el modelo directamente.
+            # Si tienes un modelo secuencial u otro tipo de red más simple, configúralo aquí.
+            
+            # Ejemplo de configuración de modelo simple (sin encoder-decoder):
+            # Puedes cargar el modelo directamente sin dividirlo en partes de encoder y decoder.
+            # Este es un modelo secuencial que ya fue compilado y entrenado en pasos anteriores.
+            self.model = tf.keras.models.load_model(self.model_filename)
 
-            # Decoder - Modelo de inferencia
-            decoder_inputs = self.model.input[1]  # Entrada del decoder en el modelo de entrenamiento
-            decoder_state_input_h = Input(shape=(decoder_latent_dim,), name='decoder_state_input_h')
-            decoder_state_input_c = Input(shape=(decoder_latent_dim,), name='decoder_state_input_c')
-            decoder_hidden_state_input = Input(shape=(None, latent_dim * 2), name='decoder_hidden_state_input')
-
-            # Embedding
-            decoder_embedding = self.model.get_layer('decoder_embedding')(decoder_inputs)
-
-            # LSTM del decoder
-            decoder_lstm = self.model.get_layer('decoder_lstm')
-            decoder_outputs, state_h, state_c = decoder_lstm(
-                decoder_embedding, initial_state=[decoder_state_input_h, decoder_state_input_c]
-            )
-
-            # Atención
-            attn_layer = self.model.get_layer('attention_dot')
-            attn_out = attn_layer([decoder_outputs, decoder_hidden_state_input])
-
-            # Concatenar
-            decoder_concat_input = self.model.get_layer('decoder_concat')([decoder_outputs, attn_out])
-
-            # Capa densa
-            decoder_dense = self.model.get_layer('decoder_dense')
-            decoder_outputs = decoder_dense(decoder_concat_input)
-
-            self.decoder_model = Model(
-                [decoder_inputs, decoder_hidden_state_input, decoder_state_input_h, decoder_state_input_c],
-                [decoder_outputs, state_h, state_c]
-            )
-            logging.info("[Conversar] Modelo de inferencia del decoder configurado.")
+            logging.info("[Conversar] Modelo de inferencia configurado sin encoder-decoder.")
 
         except Exception as e:
-            logging.error(f"[Conversar] Error al configurar los modelos de inferencia: {e}")
-            self.encoder_model = None
-            self.decoder_model = None
+            logging.error(f"[Conversar] Error al configurar el modelo de inferencia: {e}")
+            self.model = None
 
     
     def guardar_modelo(self):

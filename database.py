@@ -510,3 +510,45 @@ class Database:
         finally:
             self.put_conn(conn)  # Devolver la conexión al pool
 
+    def get_filtered_messages(self):
+        """Obtiene mensajes únicos de la tabla logsfirewallids, eliminando vacíos, nulos y repetidos."""
+        conn = self.get_conn()  # Obtener conexión del pool
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT DISTINCT mensaje 
+                    FROM logsfirewallids
+                    WHERE mensaje IS NOT NULL 
+                    AND mensaje != ''
+                    AND mensaje != 'undefined'
+                """)
+                result = cur.fetchall()
+                return [row[0] for row in result if row[0].strip()]  # Filtra mensajes vacíos después de aplicar el strip()
+        except Exception as e:
+            logging.error(f"Error al obtener los mensajes filtrados de la tabla logsfirewallids: {e}")
+            return []
+        finally:
+            self.put_conn(conn)  # Devolver la conexión al pool
+
+    def get_messages_since(self, last_id):
+        """Obtiene los mensajes a partir del último ID procesado."""
+        conn = self.get_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT id, mensaje 
+                    FROM logsfirewallids 
+                    WHERE id > %s
+                    AND mensaje IS NOT NULL
+                    AND mensaje != '' 
+                    ORDER BY id ASC
+                """, (last_id,))
+                result = cur.fetchall()
+                return [{'id': row[0], 'mensaje': row[1]} for row in result]
+        except Exception as e:
+            logging.error(f"Error al obtener los mensajes desde el ID {last_id}: {e}")
+            return []
+        finally:
+            self.put_conn(conn)
+
+
