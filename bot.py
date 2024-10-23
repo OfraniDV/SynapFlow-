@@ -2,6 +2,7 @@
 
 import os
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 import sys
 import logging
 import asyncio
