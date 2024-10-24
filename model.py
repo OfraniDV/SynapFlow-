@@ -919,8 +919,9 @@ class NumerologyModel:
         day_numbers = day_vibrations_data.get('numbers', [])
         day_parejas = day_vibrations_data.get('parejas', [])
 
-        # Obtener la raíz del número proporcionado si se encuentra en las fórmulas
+        # Obtener la raíz del número proporcionado si se encuentra en las fórmulas, limitando a 10 números
         root_numbers = self.root_numbers.get(input_number, [])
+        root_numbers = root_numbers[:10]  # Limitar a un máximo de 10 números
 
         # Obtener los números inseparables del número de entrada
         inseparable_numbers = self.inseparable_numbers.get(input_number, [])
