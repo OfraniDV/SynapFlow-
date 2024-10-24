@@ -745,10 +745,18 @@ class NumerologyModel:
                 )
                 if match:
                     trigger_number = match.group(1)  # El número que "sale"
-                    repeated_number = match.group(2)  # El número que "se repite y luego sale"
-                    follow_numbers = match.group(3)  # Los números que vienen después de "VIENE"
-                    parle_numbers = match.group(5) if match.group(4) else None  # Si es un parlay, captura esos números
-                    hala_numbers = match.group(6)  # Números "halados"
+
+                    # Verificar si existe el número repetido
+                    repeated_number = match.group(2) if match.group(2) else None
+
+                    # Verificar si existen los números que vienen después
+                    follow_numbers = match.group(3) if match.group(3) else None
+
+                    # Verificar si existen números de parlay
+                    parle_numbers = match.group(5) if match.group(4) else None
+
+                    # Verificar si existen números halados
+                    hala_numbers = match.group(6) if match.group(6) else None
                     
                     # Procesar los números según el patrón encontrado
                     if repeated_number:
@@ -766,6 +774,7 @@ class NumerologyModel:
                         hala_numbers_list = re.findall(r'\d{1,2}', hala_numbers)
                         self.lottery_rules.setdefault(trigger_number, []).extend(hala_numbers_list)
 
+                    # Usar listas vacías si no se encontró información en los grupos opcionales
                     logging.debug(f"Regla de lotería encontrada: {trigger_number}, Repetido: {repeated_number}, "
                                 f"Vienen: {follow_numbers_list if follow_numbers else []}, "
                                 f"Parle: {parle_numbers_list if parle_numbers else []}, "
@@ -773,10 +782,6 @@ class NumerologyModel:
                     matches_found = True
                     continue
 
-                # Si no se encontró ningún patrón y no hay números, pasar a la siguiente línea
-                if not matches_found:
-                    logging.debug(f"Ningún patrón encontrado para la línea: {line}")
-                    continue
 
         # Eliminar duplicados en los diccionarios
         for key in self.mapping:
