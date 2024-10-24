@@ -1075,7 +1075,8 @@ class NumerologyModel:
             message += '<code>' + ' '.join(day_digits) + '</code>\n\n'
 
         # Parejas del día (solo números con el mismo dígito como 00, 11, 22, ...)
-        valid_parejas = [num for num in day_parejas if num[0] == num[1]]
+        valid_parejas = [num for num in day_parejas if len(num) > 1 and num[0] == num[1]]
+
         if valid_parejas:
             message += f"🤝 <b>Parejas para {day_of_week_es}:</b>\n"
             message += '<code>' + ' '.join(valid_parejas) + '</code>\n\n'
