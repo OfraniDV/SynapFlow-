@@ -12,40 +12,45 @@ logger = logging.getLogger(__name__)
 async def synap(update: Update, context: ContextTypes.DEFAULT_TYPE, db, numerology_model):
     logger.info(f"Comando /synap recibido de {update.message.from_user.username}")
 
-    # Obtener el ID del grupo VIP desde las variables de entorno
+    # Obtener el ID del grupo VIP y el ID del propietario desde las variables de entorno
     VIP_GROUP_ID = os.getenv('VIP_GROUP_ID')
+    OWNER_ID = os.getenv('OWNER_ID')
 
-    if update.message.chat.type == 'private':
-        logger.warning(f"El usuario {update.message.from_user.username} intentó usar el comando en un chat privado.")
-        await update.message.reply_text(
-            "⚠️ Este comando no está disponible en chats privados. "
-            "Para recibir predicciones, debes estar en el **grupo VIP**.", 
-            parse_mode='HTML'
-        )
-        return
+    # Verificar si el comando es ejecutado por el propietario
+    if str(update.message.from_user.id) == OWNER_ID:
+        logger.info(f"El propietario {update.message.from_user.username} está usando el comando desde un chat no VIP o privado.")
+    else:
+        # Reglas generales para otros usuarios
+        if update.message.chat.type == 'private':
+            logger.warning(f"El usuario {update.message.from_user.username} intentó usar el comando en un chat privado.")
+            await update.message.reply_text(
+                "⚠️ Este comando no está disponible en chats privados. "
+                "Para recibir predicciones, debes estar en el **grupo VIP**.", 
+                parse_mode='HTML'
+            )
+            return
 
-    if VIP_GROUP_ID is None:
-        logger.error("VIP_GROUP_ID no está configurado. Asegúrate de que la variable de entorno está correctamente configurada.")
-        await update.message.reply_text("⚠️ Error: El ID del grupo VIP no está configurado.", parse_mode='HTML')
-        return
+        if VIP_GROUP_ID is None:
+            logger.error("VIP_GROUP_ID no está configurado. Asegúrate de que la variable de entorno está correctamente configurada.")
+            await update.message.reply_text("⚠️ Error: El ID del grupo VIP no está configurado.", parse_mode='HTML')
+            return
 
-    if str(update.message.chat_id) != VIP_GROUP_ID:
-        logger.warning(f"El grupo con ID {update.message.chat_id} no está autorizado para usar el comando /synap.")
-        await update.message.reply_text(
-            "⚠️ Este comando solo está disponible en el **grupo VIP**. Para poder recibir predicciones, "
-            "asegúrate de estar en el grupo correcto.", parse_mode='HTML'
-        )
-        return
+        if str(update.message.chat_id) != VIP_GROUP_ID:
+            logger.warning(f"El grupo con ID {update.message.chat_id} no está autorizado para usar el comando /synap.")
+            await update.message.reply_text(
+                "⚠️ Este comando solo está disponible en el **grupo VIP**. Para poder recibir predicciones, "
+                "asegúrate de estar en el grupo correcto.", parse_mode='HTML'
+            )
+            return
 
-    # Aquí puedes verificar si el grupo está desactivado en la base de datos
-    grupo_activado = db.verificar_grupo_activado(update.message.chat_id)  # Esta función es un ejemplo
-    if not grupo_activado:
-        logger.info(f"El grupo {update.message.chat_id} está desactivado, usando el modelo local.")
-        await update.message.reply_text("Este grupo está desactivado. Usando predicciones del modelo local.", parse_mode='HTML')
-        return
+        # Verificar si el grupo está desactivado en la base de datos
+        grupo_activado = db.verificar_grupo_activado(update.message.chat_id)
+        if not grupo_activado:
+            logger.info(f"El grupo {update.message.chat_id} está desactivado, usando el modelo local.")
+            await update.message.reply_text("Este grupo está desactivado. Usando predicciones del modelo local.", parse_mode='HTML')
+            return
 
-    # Continuar con el proceso habitual si el grupo está activado
-    # Verificar si el modelo de numerología está entrenado
+    # Continuar con el proceso habitual si el grupo está activado o si es el propietario
     if not numerology_model.is_trained:
         await update.message.reply_text('⚠️ El modelo de predicciones no está disponible en este momento.', parse_mode='HTML')
         return
@@ -85,5 +90,9 @@ async def synap(update: Update, context: ContextTypes.DEFAULT_TYPE, db, numerolo
         f"🔮 <b>Desarrollado por @Odulami usando {bot_name}</b>"
     )
 
-    await update.message.reply_text(response_message, parse_mode='HTML')
-    logger.info(f"Predicciones VIP enviadas para el número {input_number}.")
+    # Verificar si el mensaje original todavía existe antes de intentar responder
+    try:
+        await update.message.reply_text(response_message, parse_mode='HTML')
+        logger.info(f"Predicciones VIP enviadas para el número {input_number}.")
+    except Exception as e:
+        logger.error(f"Error al responder el mensaje: {e}")
