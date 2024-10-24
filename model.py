@@ -92,14 +92,14 @@ class NumerologyModel:
         self.max_sequence_length = None  # Longitud máxima de las secuencias para el modelo
         self.current_date = None  # Fecha actual (se actualiza al procesar fórmulas)
         self.charadas = {}  # Diccionario para almacenar las charadas
+        self.lottery_rules = {}  # Nuevo diccionario para almacenar las reglas de lotería
         
         # Inicialización de otras variables utilizadas en patrones y predicciones
         self.most_probable_numbers = []  # Números más probables basados en coincidencias de patrones
         self.pattern_matches = {}  # Diccionario para rastrear coincidencias de números en patrones
-        
 
-        
         logging.info("Clase NumerologyModel inicializada con todos los atributos necesarios.")
+
 
     def generate_features(self, input_number):
         """Genera características para un número dado basado en vibraciones, atrasos y otros patrones."""
@@ -335,8 +335,6 @@ class NumerologyModel:
 
         except Exception as e:
             logging.error(f"❌ [Ajuste Fino] Error durante el ajuste fino: {e}")
-
-
 
     def generar_caracteristicas(self, X_data):
         """Genera las características para el ajuste fino."""
@@ -710,7 +708,70 @@ class NumerologyModel:
                     logging.debug(f"Charada Amplia encontrada: {charada_name} con números: {charada_amplia_numbers}")
                     matches_found = True
                     continue
+                
+                # Patrón 19 mejorado: Formato "CUANDO SALE X, VIENE Y"
+                match = re.match(r'.*CUANDO SALE:? ?(\d{1,2}(?:/\d{1,2})?)\s*VIENE\s*➡️?\s*([\d\"\. ]+)', line, re.IGNORECASE)
+                if match:
+                    trigger_number = match.group(1)  # El número que sale
+                    follow_numbers = re.findall(r'\d{1,2}', match.group(2))  # Los números que siguen
 
+                    # Almacenar en el diccionario de reglas de lotería
+                    self.lottery_rules.setdefault(trigger_number, []).extend(follow_numbers)
+                    logging.debug(f"Regla de lotería encontrada: {trigger_number} seguido de {follow_numbers}")
+                    matches_found = True
+                    continue
+
+                
+                # Patrón 20: Formato "CUANDO SALE X, LO REPITEN Y LUEGO SALE Z"
+                match = re.match(r'.*CUANDO SALE EL?\s*(\d{1,2}(?:/\d{1,2})?)\s*,?\s*LO REPITEN\s*Y LUEGO SALE\s*(\d{1,2})', line, re.IGNORECASE)
+                if match:
+                    trigger_number = match.group(1)  # El número que se repite
+                    follow_number = match.group(2)  # El número que sale después
+
+                    # Almacenar en el diccionario de reglas de lotería
+                    self.lottery_rules.setdefault(trigger_number, []).append(follow_number)
+                    logging.debug(f"Regla de lotería (con repetición) encontrada: {trigger_number} seguido de {follow_number}")
+                    matches_found = True
+                    continue
+                
+                # Patrón 21 Mejorado: Captura variaciones de "CUANDO SALE X, VIENE Y", "JUEGA", "LO REPITEN", etc.
+                match = re.match(
+                    r'.*CUANDO SALE:? ?(\d{1,2}(?:/\d{1,2})?)\s*'
+                    r'(?:LO REPITEN\s*Y LUEGO SALE\s*(\d{1,2}))?'
+                    r'(?:VIENE\s*(?:➡️)?\s*([\d\"\. ]+))?'
+                    r'(?:JUEGA\s*(PARLÉ)?\s*([\d\/xV_\. ]+))?'
+                    r'(?:HALA\s*A LOS NÚMEROS\s*([\d\"\. ]+))?',
+                    line, re.IGNORECASE
+                )
+                if match:
+                    trigger_number = match.group(1)  # El número que "sale"
+                    repeated_number = match.group(2)  # El número que "se repite y luego sale"
+                    follow_numbers = match.group(3)  # Los números que vienen después de "VIENE"
+                    parle_numbers = match.group(5) if match.group(4) else None  # Si es un parlay, captura esos números
+                    hala_numbers = match.group(6)  # Números "halados"
+                    
+                    # Procesar los números según el patrón encontrado
+                    if repeated_number:
+                        self.lottery_rules.setdefault(trigger_number, []).append(repeated_number)
+
+                    if follow_numbers:
+                        follow_numbers_list = re.findall(r'\d{1,2}', follow_numbers)
+                        self.lottery_rules.setdefault(trigger_number, []).extend(follow_numbers_list)
+
+                    if parle_numbers:
+                        parle_numbers_list = re.findall(r'\d{1,2}', parle_numbers)
+                        self.lottery_rules.setdefault(trigger_number, []).extend(parle_numbers_list)
+
+                    if hala_numbers:
+                        hala_numbers_list = re.findall(r'\d{1,2}', hala_numbers)
+                        self.lottery_rules.setdefault(trigger_number, []).extend(hala_numbers_list)
+
+                    logging.debug(f"Regla de lotería encontrada: {trigger_number}, Repetido: {repeated_number}, "
+                                f"Vienen: {follow_numbers_list if follow_numbers else []}, "
+                                f"Parle: {parle_numbers_list if parle_numbers else []}, "
+                                f"Hala: {hala_numbers_list if hala_numbers else []}")
+                    matches_found = True
+                    continue
 
                 # Si no se encontró ningún patrón y no hay números, pasar a la siguiente línea
                 if not matches_found:
@@ -992,6 +1053,12 @@ class NumerologyModel:
             message += "⏳ <b>Números más atrasados:</b>\n"
             message += '<code>' + ' '.join(most_delayed_numbers) + '</code>\n\n'
 
+        # Reglas de la lotería inteligente
+        if input_number in self.lottery_rules:
+            lottery_rule_matches = self.lottery_rules[input_number]
+            message += f"✨ <b>Reglas de la Lotería para el número {input_number}:</b>\n"
+            message += '<code>' + ' '.join(lottery_rule_matches) + '</code>\n\n'
+
         # Vibraciones del día
         if day_numbers:
             message += f"📊 <b>Vibraciones para {day_of_week_es}:</b>\n"
@@ -1013,7 +1080,6 @@ class NumerologyModel:
         message += f"📅 <i>Fecha y hora de consulta: {current_time}</i>\n"
 
         return message
-
 
     def get_vibrations_for_day(self, day_of_week_es):
         try:
